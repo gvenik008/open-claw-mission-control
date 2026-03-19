@@ -69,6 +69,15 @@ const NAV_GROUPS = [
       { href: "/settings", label: "Settings", icon: Settings },
     ],
   },
+  {
+    label: "Admin",
+    items: [
+      { href: "/admin", label: "Master Control", icon: Server },
+      { href: "/admin/instances", label: "Instances", icon: Radar },
+      { href: "/admin/shared", label: "Shared Registry", icon: Sparkles },
+      { href: "/admin/activity", label: "Activity Log", icon: MessageCircle },
+    ],
+  },
 ];
 
 export default function Sidebar() {
