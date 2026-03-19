@@ -13,11 +13,9 @@ import {
   Calendar,
   Brain,
   FileText,
-  PenTool,
   ShieldCheck,
   Sparkles,
   FolderKanban,
-  Contact,
   Building2,
   Server,
   Radar,
@@ -29,23 +27,19 @@ import clsx from "clsx";
 
 const NAV_GROUPS = [
   {
-    label: "Navigation",
+    label: "Overview",
     items: [
       { href: "/", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/sessions", label: "Sessions", icon: Radio },
+      { href: "/tasks", label: "Tasks", icon: CheckSquare },
     ],
   },
   {
-    label: "Team & Work",
+    label: "Agents",
     items: [
-      { href: "/tasks", label: "Tasks", icon: CheckSquare },
       { href: "/agents", label: "Agents", icon: UserPlus },
+      { href: "/team", label: "Team Canvas", icon: Users },
+      { href: "/office", label: "Office", icon: Building2 },
       { href: "/skills-tools", label: "Skills & Tools", icon: Wrench },
-      { href: "/content", label: "Content", icon: PenTool },
-      { href: "/approvals", label: "Approvals", icon: ShieldCheck },
-      { href: "/council", label: "Council", icon: Sparkles },
-      { href: "/calendar", label: "Calendar", icon: Calendar },
-      { href: "/projects", label: "Projects", icon: FolderKanban },
     ],
   },
   {
@@ -53,19 +47,21 @@ const NAV_GROUPS = [
     items: [
       { href: "/memory", label: "Memory", icon: Brain },
       { href: "/docs", label: "Docs", icon: FileText },
-      { href: "/people", label: "People", icon: Contact },
-      { href: "/office", label: "Office", icon: Building2 },
-      { href: "/team", label: "Team", icon: Users },
+    ],
+  },
+  {
+    label: "Automation",
+    items: [
+      { href: "/calendar", label: "Calendar", icon: Calendar },
+      { href: "/pipeline", label: "Pipeline", icon: GitBranch },
+      { href: "/factory", label: "Factory", icon: Factory },
     ],
   },
   {
     label: "System",
     items: [
-      { href: "/system", label: "System", icon: Server },
-      { href: "/radar", label: "Radar", icon: Radar },
-      { href: "/factory", label: "Factory", icon: Factory },
-      { href: "/pipeline", label: "Pipeline", icon: GitBranch },
-      { href: "/feedback", label: "Feedback", icon: MessageCircle },
+      { href: "/sessions", label: "Sessions", icon: Radio },
+      { href: "/radar", label: "Monitoring", icon: Radar },
       { href: "/settings", label: "Settings", icon: Settings },
     ],
   },
@@ -85,7 +81,7 @@ export default function Sidebar() {
 
   return (
     <aside className="w-56 h-screen flex flex-col border-r border-[#222222] bg-[#111111] shrink-0">
-      {/* Workspace switcher */}
+      {/* Header */}
       <div className="px-3 py-4 border-b border-[#222222]">
         <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[#1a1a1a] transition-colors cursor-pointer">
           <div className="w-5 h-5 rounded bg-[#5e6ad2] flex items-center justify-center shrink-0">
@@ -106,7 +102,7 @@ export default function Sidebar() {
               {group.label}
             </p>
             {group.items.map(({ href, label, icon: Icon }) => {
-              const active = pathname === href;
+              const active = pathname === href || (href !== "/" && pathname.startsWith(href));
               return (
                 <Link
                   key={href}
@@ -118,9 +114,7 @@ export default function Sidebar() {
                       : "text-[#888888] hover:text-[#f5f5f5] hover:bg-[#1a1a1a] border-transparent"
                   )}
                 >
-                  <Icon
-                    className={clsx("w-4 h-4 shrink-0", active ? "text-[#5e6ad2]" : "text-[#555555]")}
-                  />
+                  <Icon className={clsx("w-4 h-4 shrink-0", active ? "text-[#5e6ad2]" : "text-[#555555]")} />
                   <span>{label}</span>
                 </Link>
               );
