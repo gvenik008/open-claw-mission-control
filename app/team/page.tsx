@@ -209,13 +209,10 @@ function TreeLevel({
           <div
             className="h-px bg-[#333333] absolute top-0"
             style={{
-              left: `calc(50% / ${node.children.length} * ${node.children.length - 1})`,
-              right: `calc(50% / ${node.children.length} * ${node.children.length - 1})`,
-              // Simpler: just span between first and last child
+              left: `calc(100% / ${node.children.length} / 2)`,
               width: node.children.length > 1
                 ? `calc(100% - 100% / ${node.children.length})`
                 : "0px",
-              left: `calc(100% / ${node.children.length} / 2)`,
             }}
           />
         </div>
