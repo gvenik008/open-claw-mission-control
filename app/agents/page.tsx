@@ -642,7 +642,75 @@ function EditView({ agent, agents, skills, tools, onBack, onSaved }: {
           <textarea className="w-full bg-[#1a1a1a] border border-[#222222] rounded-lg px-3 py-2 text-[13px] text-[#f5f5f5] resize-none focus:outline-none focus:border-[#5e6ad2]" rows={3} value={personality} onChange={(e) => setPersonality(e.target.value)} /></div>
       </div>
 
-      <div className="flex justify-between">
+      {/* Model */}
+      <div className="bg-[#111111] border border-[#222222] rounded-xl p-6 space-y-3">
+        <h2 className="text-[14px] font-semibold text-[#f5f5f5]">Model</h2>
+        <div className="space-y-2">
+          {MODELS.map((m) => (
+            <button key={m.id} onClick={() => setModel(m.id)}
+              className={clsx("w-full text-left p-3 rounded-lg border transition-all flex items-center gap-3",
+                model === m.id ? "border-[#5e6ad2] bg-[#5e6ad2]/8" : "border-[#222222] hover:border-[#333333]")}>
+              <div className={clsx("w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0",
+                model === m.id ? "border-[#5e6ad2]" : "border-[#333333]")}>
+                {model === m.id && <div className="w-2 h-2 rounded-full bg-[#5e6ad2]" />}
+              </div>
+              <div className="flex-1">
+                <span className="text-[13px] font-medium text-[#f5f5f5]">{m.name}</span>
+                <p className="text-[11px] text-[#888888]">{m.description}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Skills */}
+      <div className="bg-[#111111] border border-[#222222] rounded-xl p-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[14px] font-semibold text-[#f5f5f5]">Skills</h2>
+          <span className="text-[12px] text-[#5e6ad2] font-medium">{selSkills.length} selected</span>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5 max-h-[280px] overflow-y-auto pr-1">
+          {skills.map((s) => {
+            const isSelected = selSkills.includes(s.id);
+            return (
+              <button key={s.id} onClick={() => setSelSkills((p) => isSelected ? p.filter((x) => x !== s.id) : [...p, s.id])}
+                className={clsx("text-left px-2.5 py-2 rounded-lg text-[11px] transition-all border",
+                  isSelected ? "border-[#5e6ad2] bg-[#5e6ad2]/10 text-[#f5f5f5]" : "border-[#222222] text-[#888888] hover:border-[#333333]")}>
+                <div className="flex items-center gap-1.5">
+                  {isSelected && <Check className="w-3 h-3 text-[#5e6ad2] shrink-0" />}
+                  <span className="truncate">{s.name}</span>
+                </div>
+                <p className="text-[9px] text-[#555555] mt-0.5 truncate">{s.category}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Tools */}
+      <div className="bg-[#111111] border border-[#222222] rounded-xl p-6 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[14px] font-semibold text-[#f5f5f5]">Tools</h2>
+          <span className="text-[12px] text-[#5e6ad2] font-medium">{selTools.length} selected</span>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5 max-h-[200px] overflow-y-auto pr-1">
+          {tools.map((t) => {
+            const isSelected = selTools.includes(t.id);
+            return (
+              <button key={t.id} onClick={() => setSelTools((p) => isSelected ? p.filter((x) => x !== t.id) : [...p, t.id])}
+                className={clsx("text-left px-2.5 py-2 rounded-lg text-[11px] font-mono transition-all border",
+                  isSelected ? "border-[#5e6ad2] bg-[#5e6ad2]/10 text-[#f5f5f5]" : "border-[#222222] text-[#888888] hover:border-[#333333]")}>
+                <div className="flex items-center gap-1.5">
+                  {isSelected && <Check className="w-3 h-3 text-[#5e6ad2] shrink-0" />}
+                  <span className="truncate">{t.name}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex justify-between pb-6">
         <button onClick={onBack} className="px-3 py-1.5 text-[13px] text-[#888888] hover:text-[#f5f5f5]">Cancel</button>
         <button onClick={save} disabled={saving || !name || !role}
           className="flex items-center gap-1.5 px-5 py-2 rounded-lg text-[13px] bg-[#5e6ad2] hover:bg-[#6c78e0] text-white font-medium disabled:opacity-50">
