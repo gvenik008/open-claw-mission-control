@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@xyflow/react": "^12.10.1",
     "better-sqlite3": "^12.8.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.577.0",
