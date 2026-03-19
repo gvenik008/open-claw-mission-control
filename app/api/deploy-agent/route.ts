@@ -1,136 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "fs";
-import { join } from "path";
+import { db, genId } from "@/lib/db";
 
-const HOME = process.env.HOME || "/Users/test7";
-const OPENCLAW_DIR = join(HOME, ".openclaw");
-const CONFIG_PATH = join(OPENCLAW_DIR, "openclaw.json");
-const REGISTRY_PATH = join(HOME, ".openclaw/workspace/registry/agents.json");
-const SKILLS_PATH = join(HOME, ".openclaw/workspace/registry/skills.json");
-
-interface AgentRequest {
-  name: string;
-  agentId: string;
-  role: string;
-  model: string;
-  skills: string[];
-  tools: string[];
-  personality: string;
-  reportsTo: string;
-  division: string;
+// GET — list all agents
+export async function GET() {
+  const rows = db.prepare("SELECT * FROM agents ORDER BY created_at ASC").all() as any[];
+  const agents = rows.map(toApiFormat);
+  return NextResponse.json(agents);
 }
 
-function writeSoulMd(workspacePath: string, agent: any, skillPrompts: string) {
-  const soulContent = `# ${agent.name} — ${agent.role}
-
-## Identity
-You are ${agent.name}, a specialized AI agent. Your role: ${agent.role}.
-You report to: ${agent.reportsTo || "Gvenik (main orchestrator)"}.
-Division: ${agent.division || "independent"}.
-
-## Personality
-${agent.personality || "Professional, thorough, and detail-oriented."}
-
-## Skills & Expertise
-${skillPrompts}
-
-## Core Workflow
-1. Receive task assignment
-2. Plan your approach
-3. Execute systematically
-4. Document all findings/output in your workspace
-5. Report results back to your lead
-
-## File Ownership
-- WRITES TO: output/, memory/
-- READS FROM: skills/, any files relevant to your task
-
-## Rules
-- Always document your work
-- Report blockers immediately
-- Never operate outside your assigned scope without confirmation
-- Follow the communication chain: report to ${agent.reportsTo || "Gvenik"}
-`;
-  writeFileSync(join(workspacePath, "SOUL.md"), soulContent);
-}
-
+// POST — create agent
 export async function POST(req: NextRequest) {
   try {
-    const body: AgentRequest = await req.json();
+    const body = await req.json();
     const { name, agentId, role, model, skills, tools, personality, reportsTo, division } = body;
 
     if (!name || !agentId || !role || !model) {
-      return NextResponse.json({ error: "Missing required fields: name, agentId, role, model" }, { status: 400 });
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // 1. Backup config
-    const timestamp = Math.floor(Date.now() / 1000);
-    copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.backup-${timestamp}`);
+    const stmt = db.prepare(`
+      INSERT INTO agents (agent_id, name, role, type, division, lead, model, workspace, skills, tools, personality, status)
+      VALUES (@agent_id, @name, @role, @type, @division, @lead, @model, @workspace, @skills, @tools, @personality, 'active')
+      ON CONFLICT(agent_id) DO UPDATE SET
+        name=@name, role=@role, division=@division, lead=@lead,
+        model=@model, workspace=@workspace, skills=@skills, tools=@tools,
+        personality=@personality, updated_at=datetime('now')
+    `);
 
-    // 2. Create workspace
-    const workspacePath = join(OPENCLAW_DIR, `workspace-${agentId}`);
-    mkdirSync(join(workspacePath, "memory"), { recursive: true });
-    mkdirSync(join(workspacePath, "skills"), { recursive: true });
-    mkdirSync(join(workspacePath, "output"), { recursive: true });
-
-    // 3. Load skills data for SOUL.md generation
-    const allSkills = JSON.parse(readFileSync(SKILLS_PATH, "utf8"));
-    const selectedSkills = allSkills.filter((s: any) => skills.includes(s.id));
-    const skillPrompts = selectedSkills.map((s: any) => s.promptAdditions).join("\n\n");
-
-    // 4. Write SOUL.md
-    writeSoulMd(workspacePath, body, skillPrompts);
-
-    // 5. Write AGENTS.md
-    const agentsContent = `# ${name}\n\n- **ID:** ${agentId}\n- **Role:** ${role}\n- **Model:** ${model}\n- **Division:** ${division || "independent"}\n- **Reports to:** ${reportsTo || "Gvenik"}\n- **Skills:** ${skills.join(", ")}\n- **Tools:** ${tools.join(", ")}\n- **Created:** ${new Date().toISOString().split("T")[0]}\n`;
-    writeFileSync(join(workspacePath, "AGENTS.md"), agentsContent);
-
-    // 6. Update registry
-    const registry = JSON.parse(readFileSync(REGISTRY_PATH, "utf8"));
-    const existing = registry.findIndex((a: any) => a.agent_id === agentId);
-    const agentEntry = {
+    stmt.run({
       agent_id: agentId,
       name,
       role,
       type: division ? "worker" : "standalone",
       division: division || "none",
       lead: reportsTo || "main",
-      model: `anthropic/${model}`,
+      model: model.startsWith("anthropic/") ? model : `anthropic/${model}`,
       workspace: `~/.openclaw/workspace-${agentId}`,
-      skills,
-      tools,
-      personality,
-      created: new Date().toISOString().split("T")[0],
-      status: "active",
-    };
-    if (existing >= 0) {
-      registry[existing] = agentEntry;
-    } else {
-      registry.push(agentEntry);
-    }
-    writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+      skills: JSON.stringify(skills || []),
+      tools: JSON.stringify(tools || []),
+      personality: personality || "",
+    });
 
-    // 7. Update openclaw.json
-    const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
-    if (!config.agents.list.find((a: any) => a.id === agentId)) {
-      config.agents.list.push({
-        id: agentId,
-        workspace: workspacePath,
-        model: { primary: `anthropic/${model}` },
-      });
-    }
-    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+    // Log activity
+    db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, ?, 'agent_deployed', ?)").run(
+      genId(), agentId, `Agent "${name}" deployed`
+    );
 
-    // 8. Restart gateway (best effort, non-blocking)
-    try {
-      const { exec } = require("child_process");
-      exec("openclaw gateway restart", { timeout: 15000 });
-    } catch (e) {}
+    const agent = db.prepare("SELECT * FROM agents WHERE agent_id = ?").get(agentId);
 
     return NextResponse.json({
       success: true,
-      agent: agentEntry,
-      workspace: workspacePath,
+      agent: toApiFormat(agent),
       message: `Agent "${name}" deployed successfully`,
     });
   } catch (err: any) {
@@ -138,16 +58,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET() {
-  try {
-    const registry = JSON.parse(readFileSync(REGISTRY_PATH, "utf8"));
-    return NextResponse.json(registry);
-  } catch {
-    return NextResponse.json([]);
-  }
-}
-
-// PATCH — Update agent (rename, change role, skills, tools, personality, model)
+// PATCH — update agent
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
@@ -157,102 +68,87 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "agentId is required" }, { status: 400 });
     }
     if (agentId === "main") {
-      return NextResponse.json({ error: "Cannot modify the main orchestrator agent" }, { status: 400 });
+      return NextResponse.json({ error: "Cannot modify the main orchestrator" }, { status: 400 });
     }
 
-    // Update registry
-    const registry = JSON.parse(readFileSync(REGISTRY_PATH, "utf8"));
-    const idx = registry.findIndex((a: any) => a.agent_id === agentId);
-    if (idx < 0) {
+    const existing = db.prepare("SELECT * FROM agents WHERE agent_id = ?").get(agentId) as any;
+    if (!existing) {
       return NextResponse.json({ error: `Agent "${agentId}" not found` }, { status: 404 });
     }
 
-    const agent = registry[idx];
+    const fields: string[] = [];
+    const values: any = { agent_id: agentId };
 
-    // Apply updates
-    if (updates.name) agent.name = updates.name;
-    if (updates.role) agent.role = updates.role;
-    if (updates.skills) agent.skills = updates.skills;
-    if (updates.tools) agent.tools = updates.tools;
-    if (updates.personality) agent.personality = updates.personality;
-    if (updates.division) agent.division = updates.division;
-    if (updates.reportsTo) agent.lead = updates.reportsTo;
+    if (updates.name) { fields.push("name = @name"); values.name = updates.name; }
+    if (updates.role) { fields.push("role = @role"); values.role = updates.role; }
+    if (updates.division) { fields.push("division = @division"); values.division = updates.division; }
+    if (updates.reportsTo !== undefined) { fields.push("lead = @lead"); values.lead = updates.reportsTo || "main"; }
     if (updates.model) {
-      agent.model = updates.model.startsWith("anthropic/") ? updates.model : `anthropic/${updates.model}`;
+      const m = updates.model.startsWith("anthropic/") ? updates.model : `anthropic/${updates.model}`;
+      fields.push("model = @model"); values.model = m;
+    }
+    if (updates.personality !== undefined) { fields.push("personality = @personality"); values.personality = updates.personality; }
+    if (updates.skills) { fields.push("skills = @skills"); values.skills = JSON.stringify(updates.skills); }
+    if (updates.tools) { fields.push("tools = @tools"); values.tools = JSON.stringify(updates.tools); }
+
+    if (fields.length > 0) {
+      fields.push("updated_at = datetime('now')");
+      db.prepare(`UPDATE agents SET ${fields.join(", ")} WHERE agent_id = @agent_id`).run(values);
     }
 
-    registry[idx] = agent;
-    writeFileSync(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+    // Log activity
+    db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, ?, 'agent_updated', ?)").run(
+      genId(), agentId, `Agent "${updates.name || existing.name}" updated`
+    );
 
-    // Regenerate SOUL.md
-    const workspacePath = join(OPENCLAW_DIR, `workspace-${agentId}`);
-    if (existsSync(workspacePath)) {
-      const allSkills = JSON.parse(readFileSync(SKILLS_PATH, "utf8"));
-      const selectedSkills = allSkills.filter((s: any) => (agent.skills || []).includes(s.id));
-      const skillPrompts = selectedSkills.map((s: any) => s.promptAdditions).join("\n\n");
-      writeSoulMd(workspacePath, {
-        name: agent.name,
-        role: agent.role,
-        personality: agent.personality || "",
-        reportsTo: agent.lead,
-        division: agent.division,
-      }, skillPrompts);
-
-      // Update AGENTS.md
-      const agentsContent = `# ${agent.name}\n\n- **ID:** ${agentId}\n- **Role:** ${agent.role}\n- **Model:** ${agent.model}\n- **Division:** ${agent.division || "independent"}\n- **Reports to:** ${agent.lead || "Gvenik"}\n- **Skills:** ${(agent.skills || []).join(", ")}\n- **Tools:** ${(agent.tools || []).join(", ")}\n- **Created:** ${agent.created}\n`;
-      writeFileSync(join(workspacePath, "AGENTS.md"), agentsContent);
-    }
-
-    // Update model in openclaw.json if changed
-    if (updates.model) {
-      const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
-      const configAgent = config.agents.list.find((a: any) => a.id === agentId);
-      if (configAgent) {
-        configAgent.model = { primary: agent.model };
-        writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-      }
-    }
-
-    // Restart gateway
-    try {
-      const { exec } = require("child_process");
-      exec("openclaw gateway restart", { timeout: 15000 });
-    } catch (e) {}
-
+    const agent = db.prepare("SELECT * FROM agents WHERE agent_id = ?").get(agentId);
     return NextResponse.json({
       success: true,
-      agent,
-      message: `Agent "${agent.name}" updated successfully`,
+      agent: toApiFormat(agent),
+      message: `Agent "${(agent as any).name}" updated successfully`,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
 
+// DELETE — retire agent
 export async function DELETE(req: NextRequest) {
   try {
     const { agentId } = await req.json();
+    if (!agentId) {
+      return NextResponse.json({ error: "agentId is required" }, { status: 400 });
+    }
 
-    // Update registry
-    const registry = JSON.parse(readFileSync(REGISTRY_PATH, "utf8"));
-    const updated = registry.map((a: any) =>
-      a.agent_id === agentId ? { ...a, status: "retired" } : a
+    db.prepare("UPDATE agents SET status = 'retired', updated_at = datetime('now') WHERE agent_id = ?").run(agentId);
+
+    db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, ?, 'agent_retired', ?)").run(
+      genId(), agentId, `Agent "${agentId}" retired`
     );
-    writeFileSync(REGISTRY_PATH, JSON.stringify(updated, null, 2));
-
-    // Remove from openclaw.json
-    const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
-    config.agents.list = config.agents.list.filter((a: any) => a.id !== agentId);
-    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-
-    // Restart gateway
-    try {
-      const { exec } = require("child_process");
-      exec("openclaw gateway restart", { timeout: 15000 });
-    } catch (e) {}
 
     return NextResponse.json({ success: true, message: `Agent "${agentId}" retired` });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
+}
+
+// ─── Transform DB row to API format ───────────────────────────────────────────
+
+function toApiFormat(row: any) {
+  if (!row) return null;
+  return {
+    agent_id: row.agent_id,
+    name: row.name,
+    role: row.role,
+    type: row.type,
+    division: row.division,
+    lead: row.lead,
+    model: row.model,
+    workspace: row.workspace,
+    skills: JSON.parse(row.skills || "[]"),
+    tools: JSON.parse(row.tools || "[]"),
+    personality: row.personality,
+    created: row.created_at?.split("T")[0] || row.created_at?.split(" ")[0],
+    status: row.status,
+  };
 }
