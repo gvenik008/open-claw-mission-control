@@ -79,8 +79,9 @@ function AgentIcon({ agent }: { agent: { agent_id: string; division?: string } }
 
 function UserNode() {
   return (
-    <div className="relative">
-      <Handle type="source" position={Position.Bottom} className="!bg-[#5e6ad2] !w-3 !h-3 !border-2 !border-[#0a0a0a]" />
+    <div className="relative group">
+      <Handle type="source" position={Position.Bottom}
+        className="!bg-[#5e6ad2] !w-4 !h-4 !border-2 !border-[#0a0a0a] !opacity-40 group-hover:!opacity-100 hover:!scale-150 !transition-all !cursor-crosshair" />
       <div className="bg-[#111111] border-2 border-[#5e6ad2]/40 rounded-xl px-6 py-4 text-center min-w-[140px] shadow-lg shadow-[#5e6ad2]/5">
         <div className="w-12 h-12 rounded-full mx-auto mb-2 bg-[#5e6ad2]/20 flex items-center justify-center text-[#5e6ad2] text-lg font-semibold">
           S
@@ -100,9 +101,11 @@ function AgentNode({ data }: { data: { agent: Agent; selected: boolean } }) {
   const isMain = agent.agent_id === "main";
 
   return (
-    <div className="relative">
-      <Handle type="target" position={Position.Top} className="!bg-[#555555] !w-3 !h-3 !border-2 !border-[#0a0a0a]" />
-      <Handle type="source" position={Position.Bottom} className="!bg-[#555555] !w-3 !h-3 !border-2 !border-[#0a0a0a]" />
+    <div className="relative group">
+      <Handle type="target" position={Position.Top}
+        className="!bg-emerald-500 !w-4 !h-4 !border-2 !border-[#0a0a0a] !opacity-40 group-hover:!opacity-100 hover:!scale-150 !transition-all !cursor-crosshair" />
+      <Handle type="source" position={Position.Bottom}
+        className="!bg-[#5e6ad2] !w-4 !h-4 !border-2 !border-[#0a0a0a] !opacity-40 group-hover:!opacity-100 hover:!scale-150 !transition-all !cursor-crosshair" />
       <div
         className={clsx(
           "bg-[#111111] rounded-xl px-5 py-4 text-center min-w-[160px] transition-all shadow-lg",
@@ -437,7 +440,7 @@ export default function TeamPage() {
         <div>
           <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Team</h1>
           <p className="text-sm text-[#555555] mt-0.5">
-            {loading ? "Loading…" : `${activeCount} agents · drag to move, connect handles to change hierarchy`}
+            {loading ? "Loading…" : `${activeCount} agents · drag to move · drag from blue dot to green dot to connect · click edge to disconnect`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -474,11 +477,28 @@ export default function TeamPage() {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeClick={onNodeClick}
+          onEdgeClick={(_: any, edge: Edge) => {
+            if (confirm(`Remove connection from ${edge.source} → ${edge.target}?`)) {
+              setEdges((eds) => eds.filter((e) => e.id !== edge.id));
+              // Reset target agent's lead to "main"
+              if (edge.target !== "main" && edge.target !== "user") {
+                fetch("/api/deploy-agent", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ agentId: edge.target, reportsTo: "main" }),
+                });
+              }
+            }
+          }}
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={{ padding: 0.3 }}
           minZoom={0.3}
           maxZoom={2}
+          snapToGrid
+          snapGrid={[20, 20]}
+          connectionLineStyle={{ stroke: "#5e6ad2", strokeWidth: 2 }}
+          connectionLineType={"smoothstep" as any}
           defaultEdgeOptions={{
             type: "smoothstep",
             animated: false,
