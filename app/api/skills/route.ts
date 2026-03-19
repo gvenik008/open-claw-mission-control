@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { sanitizeText, sanitizeId } from "@/lib/sanitize";
 
 function toApiFormat(row: any) {
   return {
@@ -19,7 +20,13 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { id, name, category, description, requiredTools, promptAdditions } = await req.json();
+    const body = await req.json();
+    const id = sanitizeId(body.id);
+    const name = sanitizeText(body.name);
+    const category = sanitizeText(body.category);
+    const description = sanitizeText(body.description || "");
+    const requiredTools = body.requiredTools;
+    const promptAdditions = sanitizeText(body.promptAdditions || "");
     if (!id || !name || !category) {
       return NextResponse.json({ error: "Missing required fields: id, name, category" }, { status: 400 });
     }
@@ -31,9 +38,9 @@ export async function POST(req: NextRequest) {
         required_tools=@required_tools, prompt_additions=@prompt_additions, updated_at=datetime('now')
     `).run({
       id, name, category,
-      description: description || "",
+      description,
       required_tools: JSON.stringify(requiredTools || []),
-      prompt_additions: promptAdditions || "",
+      prompt_additions: promptAdditions,
     });
     const skill = db.prepare("SELECT * FROM skills WHERE id = ?").get(id);
     return NextResponse.json({ success: true, skill: toApiFormat(skill) });

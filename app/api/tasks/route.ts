@@ -59,6 +59,8 @@ export async function PATCH(req: NextRequest) {
     if (updates.assignee !== undefined) { fields.push("assignee = @assignee"); values.assignee = updates.assignee || null; }
     if (updates.dueDate !== undefined) { fields.push("due_date = @due_date"); values.due_date = updates.dueDate || null; }
     if (updates.tags) { fields.push("tags = @tags"); values.tags = JSON.stringify(updates.tags); }
+    if (updates.agentSession !== undefined) { fields.push("agent_session = @agent_session"); values.agent_session = updates.agentSession; }
+    if (updates.result !== undefined) { fields.push("result = @result"); values.result = updates.result; }
 
     if (fields.length > 0) {
       fields.push("updated_at = datetime('now')");

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { sanitizeText, sanitizeId } from "@/lib/sanitize";
 
 export async function GET() {
   const rows = db.prepare("SELECT * FROM tools ORDER BY category, name").all();
@@ -8,7 +9,11 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { id, name, category, description } = await req.json();
+    const body = await req.json();
+    const id = sanitizeId(body.id);
+    const name = sanitizeText(body.name);
+    const category = sanitizeText(body.category || "Custom");
+    const description = sanitizeText(body.description || "");
     if (!id || !name) {
       return NextResponse.json({ error: "Missing required fields: id, name" }, { status: 400 });
     }
@@ -17,7 +22,7 @@ export async function POST(req: NextRequest) {
       VALUES (@id, @name, @category, @description)
       ON CONFLICT(id) DO UPDATE SET
         name=@name, category=@category, description=@description, updated_at=datetime('now')
-    `).run({ id, name, category: category || "Custom", description: description || "" });
+    `).run({ id, name, category, description });
     const tool = db.prepare("SELECT * FROM tools WHERE id = ?").get(id);
     return NextResponse.json({ success: true, tool });
   } catch (err: any) {

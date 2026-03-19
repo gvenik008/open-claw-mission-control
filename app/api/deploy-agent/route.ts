@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, genId } from "@/lib/db";
+import { sanitizeText, sanitizeId } from "@/lib/sanitize";
 
 // GET — list all agents
 export async function GET() {
@@ -12,7 +13,15 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, agentId, role, model, skills, tools, personality, reportsTo, division } = body;
+    const name = sanitizeText(body.name);
+    const agentId = sanitizeId(body.agentId);
+    const role = sanitizeText(body.role);
+    const model = body.model;
+    const skills = body.skills;
+    const tools = body.tools;
+    const personality = sanitizeText(body.personality || "");
+    const reportsTo = sanitizeId(body.reportsTo || "");
+    const division = sanitizeText(body.division || "");
 
     if (!name || !agentId || !role || !model) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -79,15 +88,15 @@ export async function PATCH(req: NextRequest) {
     const fields: string[] = [];
     const values: any = { agent_id: agentId };
 
-    if (updates.name) { fields.push("name = @name"); values.name = updates.name; }
-    if (updates.role) { fields.push("role = @role"); values.role = updates.role; }
-    if (updates.division) { fields.push("division = @division"); values.division = updates.division; }
-    if (updates.reportsTo !== undefined) { fields.push("lead = @lead"); values.lead = updates.reportsTo || "main"; }
+    if (updates.name) { fields.push("name = @name"); values.name = sanitizeText(updates.name); }
+    if (updates.role) { fields.push("role = @role"); values.role = sanitizeText(updates.role); }
+    if (updates.division) { fields.push("division = @division"); values.division = sanitizeText(updates.division); }
+    if (updates.reportsTo !== undefined) { fields.push("lead = @lead"); values.lead = sanitizeId(updates.reportsTo) || "main"; }
     if (updates.model) {
       const m = updates.model.startsWith("anthropic/") ? updates.model : `anthropic/${updates.model}`;
       fields.push("model = @model"); values.model = m;
     }
-    if (updates.personality !== undefined) { fields.push("personality = @personality"); values.personality = updates.personality; }
+    if (updates.personality !== undefined) { fields.push("personality = @personality"); values.personality = sanitizeText(updates.personality); }
     if (updates.skills) { fields.push("skills = @skills"); values.skills = JSON.stringify(updates.skills); }
     if (updates.tools) { fields.push("tools = @tools"); values.tools = JSON.stringify(updates.tools); }
 
