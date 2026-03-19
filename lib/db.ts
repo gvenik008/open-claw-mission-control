@@ -1,11 +1,12 @@
 import Database from "better-sqlite3";
-import { join } from "path";
-
-const DB_PATH = join(process.cwd(), "data", "mission-control.db");
-
-// Ensure data dir exists
+import { join, dirname } from "path";
 import { mkdirSync } from "fs";
-mkdirSync(join(process.cwd(), "data"), { recursive: true });
+
+// DATABASE_PATH env var allows per-instance databases from the same codebase
+const DB_PATH = process.env.DATABASE_PATH || join(process.cwd(), "data", "mission-control.db");
+
+// Ensure DB directory exists
+mkdirSync(dirname(DB_PATH), { recursive: true });
 
 // Singleton
 const globalForDb = globalThis as unknown as { db: Database.Database | undefined };
