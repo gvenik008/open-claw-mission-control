@@ -40,6 +40,7 @@ const NAV_GROUPS = [
     items: [
       { href: "/tasks", label: "Tasks", icon: CheckSquare },
       { href: "/agents", label: "Agents", icon: UserPlus },
+      { href: "/skills-tools", label: "Skills & Tools", icon: Wrench },
       { href: "/content", label: "Content", icon: PenTool },
       { href: "/approvals", label: "Approvals", icon: ShieldCheck },
       { href: "/council", label: "Council", icon: Sparkles },
