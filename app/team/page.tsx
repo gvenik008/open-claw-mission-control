@@ -1,16 +1,23 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 import {
   UserPlus,
-  ChevronDown,
-  ChevronUp,
-  Trash2,
   Loader2,
   AlertCircle,
+  Cpu,
+  Bot,
+  Shield,
+  Bug,
+  Wrench,
+  ChevronRight,
+  Users,
+  Crown,
 } from "lucide-react";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Agent {
   agent_id: string;
@@ -25,7 +32,15 @@ interface Agent {
   created: string;
   status: string;
   type?: string;
+  personality?: string;
 }
+
+interface TreeNode {
+  agent: Agent;
+  children: TreeNode[];
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function modelLabel(model: string) {
   const m = model.replace("anthropic/", "");
@@ -35,211 +50,392 @@ function modelLabel(model: string) {
   return m;
 }
 
-function AgentCard({
+function agentIcon(agent: Agent) {
+  if (agent.agent_id === "main") return <Crown className="w-5 h-5" />;
+  if (agent.type === "orchestrator") return <Cpu className="w-5 h-5" />;
+  if (agent.division?.includes("Security")) return <Shield className="w-5 h-5" />;
+  if (agent.division?.includes("QA")) return <Bug className="w-5 h-5" />;
+  return <Bot className="w-5 h-5" />;
+}
+
+function agentColor(agent: Agent): string {
+  if (agent.agent_id === "main") return "#5e6ad2";
+  if (agent.division?.includes("Security")) return "#ef4444";
+  if (agent.division?.includes("QA")) return "#f59e0b";
+  if (agent.division?.includes("Development")) return "#10b981";
+  if (agent.division?.includes("DevOps")) return "#06b6d4";
+  if (agent.division?.includes("Research")) return "#8b5cf6";
+  if (agent.division?.includes("Design")) return "#ec4899";
+  return "#888888";
+}
+
+function buildTree(agents: Agent[]): TreeNode | null {
+  const active = agents.filter((a) => a.status !== "retired");
+  const main = active.find((a) => a.agent_id === "main" || a.type === "orchestrator");
+  if (!main) return null;
+
+  const byLead = new Map<string, Agent[]>();
+  active.forEach((a) => {
+    if (a.agent_id === main.agent_id) return;
+    const lead = a.lead || "main";
+    const list = byLead.get(lead) || [];
+    list.push(a);
+    byLead.set(lead, list);
+  });
+
+  function build(agent: Agent): TreeNode {
+    const children = (byLead.get(agent.agent_id) || []).map(build);
+    return { agent, children };
+  }
+
+  return build(main);
+}
+
+// ─── Org Chart Card ───────────────────────────────────────────────────────────
+
+function OrgCard({
   agent,
-  isMain,
-  onRetire,
+  isRoot,
+  onClick,
 }: {
   agent: Agent;
-  isMain: boolean;
-  onRetire: (id: string) => void;
+  isRoot?: boolean;
+  onClick: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [retiring, setRetiring] = useState(false);
-
-  const isRetired = agent.status === "retired";
-
-  const handleRetire = async () => {
-    if (!confirming) {
-      setConfirming(true);
-      return;
-    }
-    setRetiring(true);
-    try {
-      await fetch("/api/deploy-agent", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentId: agent.agent_id }),
-      });
-      onRetire(agent.agent_id);
-    } catch {
-      // ignore
-    } finally {
-      setRetiring(false);
-      setConfirming(false);
-    }
-  };
+  const color = agentColor(agent);
+  const isMain = agent.agent_id === "main";
 
   return (
-    <div
+    <button
+      onClick={onClick}
       className={clsx(
-        "bg-[#111111] border rounded-md transition-all",
-        isRetired ? "border-[#1e1e1e] opacity-50" : "border-[#222222]"
+        "relative flex flex-col items-center text-center group transition-all",
+        "hover:scale-105 hover:z-10"
       )}
     >
-      {/* Card header */}
       <div
-        className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-[#1a1a1a] transition-colors rounded-md"
-        onClick={() => setExpanded((e) => !e)}
+        className={clsx(
+          "rounded-xl border-2 p-4 transition-all bg-[#111111]",
+          isRoot ? "w-48" : "w-44"
+        )}
+        style={{ borderColor: `${color}40` }}
       >
-        {/* Status dot */}
+        {/* Avatar */}
         <div
-          className={clsx(
-            "w-2 h-2 rounded-full shrink-0",
-            isRetired
-              ? "bg-[#555555]"
-              : agent.status === "active"
-              ? "bg-emerald-500"
-              : "bg-amber-500"
-          )}
-        />
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[13px] font-medium text-[#f5f5f5]">{agent.name}</span>
-            {isMain && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded-sm bg-[#5e6ad2]/20 text-[#5e6ad2]">
-                orchestrator
-              </span>
-            )}
-            {agent.division && agent.division !== "none" && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888]">
-                {agent.division}
-              </span>
-            )}
-          </div>
-          <p className="text-[12px] text-[#555555] leading-snug truncate mt-0.5">{agent.role}</p>
+          className="w-12 h-12 rounded-full mx-auto mb-3 flex items-center justify-center"
+          style={{ backgroundColor: `${color}20`, color }}
+        >
+          {agentIcon(agent)}
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {agent.skills?.length > 0 && (
-            <span className="text-[10px] text-[#555555]">
-              {agent.skills.length} skill{agent.skills.length !== 1 ? "s" : ""}
-            </span>
+        {/* Name */}
+        <h3
+          className={clsx(
+            "font-semibold text-[#f5f5f5] leading-tight mb-1",
+            isRoot ? "text-[15px]" : "text-[13px]"
           )}
-          {agent.tools?.length > 0 && (
-            <span className="text-[10px] text-[#555555]">
-              {agent.tools.length} tool{agent.tools.length !== 1 ? "s" : ""}
-            </span>
-          )}
-          <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888] font-mono">
+        >
+          {agent.name}
+        </h3>
+
+        {/* Role (truncated) */}
+        <p className="text-[11px] text-[#888888] leading-snug line-clamp-2 mb-2">
+          {agent.role.split("—")[0].trim()}
+        </p>
+
+        {/* Model badge */}
+        <div className="flex items-center justify-center gap-1.5">
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded-full font-medium"
+            style={{ backgroundColor: `${color}15`, color }}
+          >
             {modelLabel(agent.model)}
           </span>
-          {expanded ? (
-            <ChevronUp className="w-3.5 h-3.5 text-[#555555]" />
-          ) : (
-            <ChevronDown className="w-3.5 h-3.5 text-[#555555]" />
+          {agent.status === "active" && (
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
           )}
         </div>
-      </div>
 
-      {/* Expanded details */}
-      {expanded && (
-        <div className="border-t border-[#222222] px-4 py-3 space-y-3">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-            <Detail label="Agent ID" value={<span className="font-mono">{agent.agent_id}</span>} />
-            <Detail label="Status" value={agent.status} />
-            <Detail label="Model" value={agent.model.replace("anthropic/", "")} />
-            <Detail label="Reports To" value={agent.lead || "—"} />
-            {agent.workspace && (
-              <Detail
-                label="Workspace"
-                value={<span className="font-mono text-[11px]">{agent.workspace}</span>}
-                full
-              />
+        {/* Stats row */}
+        {(agent.skills?.length > 0 || agent.tools?.length > 0) && (
+          <div className="flex items-center justify-center gap-2 mt-2">
+            {agent.skills?.length > 0 && (
+              <span className="text-[9px] text-[#555555]">
+                {agent.skills.length} skill{agent.skills.length !== 1 ? "s" : ""}
+              </span>
             )}
-            {agent.created && <Detail label="Created" value={agent.created} />}
+            {agent.tools?.length > 0 && (
+              <span className="text-[9px] text-[#555555]">
+                {agent.tools.length} tool{agent.tools.length !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
+        )}
+      </div>
+    </button>
+  );
+}
 
-          {agent.skills?.length > 0 && (
-            <div>
-              <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium mb-1.5">
-                Skills
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {agent.skills.map((s) => (
-                  <span key={s} className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888]">
-                    {s}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+// ─── Tree Level Renderer ──────────────────────────────────────────────────────
 
-          {agent.tools?.length > 0 && (
-            <div>
-              <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium mb-1.5">
-                Tools
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {agent.tools.map((t) => (
-                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888]">
-                    {t}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+function TreeLevel({
+  node,
+  onSelect,
+  depth,
+}: {
+  node: TreeNode;
+  onSelect: (agent: Agent) => void;
+  depth: number;
+}) {
+  const hasChildren = node.children.length > 0;
 
-          {!isMain && !isRetired && (
-            <div className="flex items-center justify-end pt-1">
-              {confirming ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[12px] text-[#888888]">Retire this agent?</span>
-                  <button
-                    onClick={() => setConfirming(false)}
-                    className="px-2.5 py-1 rounded-md text-[12px] text-[#888888] hover:text-[#f5f5f5] hover:bg-[#222222] transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleRetire}
-                    disabled={retiring}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-50"
-                  >
-                    {retiring ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                    Confirm
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={handleRetire}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12px] text-[#555555] hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Retire
-                </button>
-              )}
+  return (
+    <div className="flex flex-col items-center">
+      {/* This node's card */}
+      <OrgCard
+        agent={node.agent}
+        isRoot={depth === 0}
+        onClick={() => onSelect(node.agent)}
+      />
+
+      {/* Connector line down */}
+      {hasChildren && (
+        <div className="w-px h-6 bg-[#333333]" />
+      )}
+
+      {/* Horizontal connector bar */}
+      {hasChildren && node.children.length > 1 && (
+        <div className="relative w-full flex justify-center">
+          <div
+            className="h-px bg-[#333333] absolute top-0"
+            style={{
+              left: `calc(50% / ${node.children.length} * ${node.children.length - 1})`,
+              right: `calc(50% / ${node.children.length} * ${node.children.length - 1})`,
+              // Simpler: just span between first and last child
+              width: node.children.length > 1
+                ? `calc(100% - 100% / ${node.children.length})`
+                : "0px",
+              left: `calc(100% / ${node.children.length} / 2)`,
+            }}
+          />
+        </div>
+      )}
+
+      {/* Children */}
+      {hasChildren && (
+        <div className="flex items-start gap-2 pt-0">
+          {node.children.map((child, idx) => (
+            <div key={child.agent.agent_id} className="flex flex-col items-center">
+              {/* Vertical connector from horizontal bar to child */}
+              <div className="w-px h-6 bg-[#333333]" />
+              <TreeLevel node={child} onSelect={onSelect} depth={depth + 1} />
             </div>
-          )}
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function Detail({
-  label,
-  value,
-  full,
+// ─── Agent Detail Sidebar ─────────────────────────────────────────────────────
+
+function AgentSidebar({
+  agent,
+  agents,
+  onClose,
 }: {
-  label: string;
-  value: React.ReactNode;
-  full?: boolean;
+  agent: Agent;
+  agents: Agent[];
+  onClose: () => void;
 }) {
+  const color = agentColor(agent);
+  const reportsTo = agents.find((a) => a.agent_id === agent.lead);
+  const subordinates = agents.filter(
+    (a) => a.lead === agent.agent_id && a.agent_id !== agent.agent_id && a.status === "active"
+  );
+
   return (
-    <div className={clsx(full && "col-span-2")}>
-      <p className="text-[10px] text-[#555555] mb-0.5">{label}</p>
-      <p className="text-[12px] text-[#f5f5f5]">{value}</p>
+    <div className="fixed inset-y-0 right-0 w-80 bg-[#111111] border-l border-[#222222] z-50 overflow-y-auto shadow-2xl">
+      {/* Header */}
+      <div className="sticky top-0 bg-[#111111] border-b border-[#222222] px-5 py-4 flex items-center justify-between">
+        <span className="text-[13px] font-semibold text-[#f5f5f5]">Agent Details</span>
+        <button
+          onClick={onClose}
+          className="text-[#555555] hover:text-[#f5f5f5] transition-colors text-[13px]"
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="p-5 space-y-5">
+        {/* Avatar + Name */}
+        <div className="flex flex-col items-center text-center">
+          <div
+            className="w-16 h-16 rounded-full mb-3 flex items-center justify-center"
+            style={{ backgroundColor: `${color}20`, color }}
+          >
+            {agentIcon(agent)}
+          </div>
+          <h3 className="text-[16px] font-semibold text-[#f5f5f5]">{agent.name}</h3>
+          <p className="text-[12px] text-[#888888] mt-1 leading-relaxed">{agent.role}</p>
+          <div className="flex items-center gap-2 mt-2">
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+              style={{ backgroundColor: `${color}15`, color }}
+            >
+              {modelLabel(agent.model)}
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400">
+              {agent.status}
+            </span>
+          </div>
+        </div>
+
+        {/* Info grid */}
+        <div className="space-y-3">
+          <DetailRow label="Agent ID" value={agent.agent_id} mono />
+          <DetailRow label="Division" value={agent.division === "none" ? "Core" : agent.division} />
+          <DetailRow
+            label="Reports to"
+            value={reportsTo ? reportsTo.name : agent.agent_id === "main" ? "User (Samvel)" : "—"}
+          />
+          {subordinates.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium mb-1.5">
+                Manages
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {subordinates.map((s) => (
+                  <span
+                    key={s.agent_id}
+                    className="text-[10px] px-2 py-0.5 rounded-full bg-[#1a1a1a] text-[#888888] border border-[#222222]"
+                  >
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <DetailRow label="Created" value={agent.created} />
+          <DetailRow label="Workspace" value={agent.workspace} mono small />
+        </div>
+
+        {/* Skills */}
+        {agent.skills?.length > 0 && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium mb-2">
+              Skills ({agent.skills.length})
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {agent.skills.map((s) => (
+                <span
+                  key={s}
+                  className="text-[10px] px-2 py-1 rounded-md bg-[#1a1a1a] border border-[#222222] text-[#888888]"
+                >
+                  {s}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tools */}
+        {agent.tools?.length > 0 && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium mb-2">
+              Tools ({agent.tools.length})
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {agent.tools.map((t) => (
+                <span
+                  key={t}
+                  className="text-[10px] px-2 py-1 rounded-md bg-[#1a1a1a] border border-[#222222] text-[#888888] font-mono"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Personality */}
+        {agent.personality && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium mb-2">
+              Personality
+            </p>
+            <p className="text-[11px] text-[#888888] leading-relaxed bg-[#0a0a0a] border border-[#1a1a1a] rounded-md p-3">
+              {agent.personality}
+            </p>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="pt-2">
+          <Link
+            href="/agents"
+            className="flex items-center justify-center gap-1.5 w-full py-2 rounded-md text-[13px] bg-[#1a1a1a] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] hover:border-[#333333] transition-all"
+          >
+            Edit in Agents
+            <ChevronRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }
+
+function DetailRow({
+  label,
+  value,
+  mono,
+  small,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  small?: boolean;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <span className="text-[11px] text-[#555555] shrink-0">{label}</span>
+      <span
+        className={clsx(
+          "text-[11px] text-[#f5f5f5] text-right",
+          mono && "font-mono",
+          small && "text-[10px] text-[#888888]"
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ─── User node (Samvel at top) ────────────────────────────────────────────────
+
+function UserNode() {
+  return (
+    <div className="flex flex-col items-center mb-0">
+      <div className="rounded-xl border-2 border-[#5e6ad2]/30 bg-[#111111] p-4 w-40 text-center">
+        <div className="w-10 h-10 rounded-full mx-auto mb-2 bg-[#5e6ad2]/20 flex items-center justify-center text-[#5e6ad2] text-lg font-semibold">
+          S
+        </div>
+        <h3 className="text-[13px] font-semibold text-[#f5f5f5]">Samvel</h3>
+        <p className="text-[10px] text-[#888888] mt-0.5">Human Lead</p>
+      </div>
+      <div className="w-px h-6 bg-[#333333]" />
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TeamPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
 
   useEffect(() => {
     fetch("/api/deploy-agent")
@@ -254,35 +450,19 @@ export default function TeamPage() {
       });
   }, []);
 
-  const handleRetire = (agentId: string) => {
-    setAgents((prev) =>
-      prev.map((a) => (a.agent_id === agentId ? { ...a, status: "retired" } : a))
-    );
-  };
-
-  const mainAgent = agents.find(
-    (a) => a.agent_id === "main" || a.agent_id === "gvenik"
-  );
-  const otherAgents = agents.filter(
-    (a) => a.agent_id !== "main" && a.agent_id !== "gvenik"
-  );
-  const isOnlyMain = agents.length <= 1;
-
-  // Group non-main agents by division
-  const grouped = otherAgents.reduce<Record<string, Agent[]>>((acc, a) => {
-    const div = a.division && a.division !== "none" ? a.division : "Independent";
-    (acc[div] = acc[div] || []).push(a);
-    return acc;
-  }, {});
+  const tree = useMemo(() => buildTree(agents), [agents]);
+  const activeCount = agents.filter((a) => a.status !== "retired").length;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-full mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between max-w-3xl mx-auto">
         <div>
           <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Team</h1>
           <p className="text-sm text-[#555555] mt-0.5">
-            {loading ? "Loading…" : `${agents.length} agent${agents.length !== 1 ? "s" : ""}`}
+            {loading
+              ? "Loading…"
+              : `${activeCount} active agent${activeCount !== 1 ? "s" : ""}`}
           </p>
         </div>
         <Link
@@ -296,93 +476,60 @@ export default function TeamPage() {
 
       {/* Loading / Error */}
       {loading && (
-        <div className="flex items-center gap-2 text-[13px] text-[#555555] py-4">
+        <div className="flex items-center justify-center gap-2 text-[13px] text-[#555555] py-12">
           <Loader2 className="w-4 h-4 animate-spin" />
-          Loading agents…
+          Loading team…
         </div>
       )}
       {error && (
-        <div className="flex items-center gap-2 text-[13px] text-red-400 bg-red-500/8 border border-red-500/20 rounded-md px-4 py-3">
+        <div className="flex items-center gap-2 text-[13px] text-red-400 bg-red-500/8 border border-red-500/20 rounded-md px-4 py-3 max-w-3xl mx-auto">
           <AlertCircle className="w-4 h-4 shrink-0" />
           {error}
         </div>
       )}
 
-      {!loading && !error && (
+      {/* Org Chart */}
+      {!loading && !error && tree && (
+        <div className="flex justify-center overflow-x-auto pb-8 pt-4">
+          <div className="flex flex-col items-center min-w-max">
+            <UserNode />
+            <TreeLevel node={tree} onSelect={setSelectedAgent} depth={0} />
+          </div>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && !error && !tree && (
+        <div className="bg-[#111111] border border-[#222222] rounded-md px-5 py-12 flex flex-col items-center text-center gap-3 max-w-3xl mx-auto">
+          <Users className="w-10 h-10 text-[#333333]" />
+          <div>
+            <p className="text-[14px] font-medium text-[#f5f5f5]">No agents found</p>
+            <p className="text-[13px] text-[#555555] mt-0.5">
+              Create your first agent to build your team.
+            </p>
+          </div>
+          <Link
+            href="/agents"
+            className="flex items-center gap-1.5 bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors font-medium mt-2"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            Create Agent
+          </Link>
+        </div>
+      )}
+
+      {/* Detail sidebar */}
+      {selectedAgent && (
         <>
-          {/* Orchestrator */}
-          {mainAgent ? (
-            <div>
-              <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium mb-2">
-                Orchestrator
-              </p>
-              <AgentCard agent={mainAgent} isMain onRetire={handleRetire} />
-            </div>
-          ) : (
-            /* Fallback static Gvenik card when registry has no main entry */
-            <div>
-              <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium mb-2">
-                Orchestrator
-              </p>
-              <div className="bg-[#111111] border border-[#222222] rounded-md px-4 py-3 flex items-center gap-3">
-                <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-medium text-[#f5f5f5]">Gvenik</span>
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-sm bg-[#5e6ad2]/20 text-[#5e6ad2]">
-                      orchestrator
-                    </span>
-                  </div>
-                  <p className="text-[12px] text-[#555555] mt-0.5">Main AI assistant</p>
-                </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888] font-mono">
-                  Opus 4
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* CTA if only main agent */}
-          {isOnlyMain && (
-            <div className="bg-[#111111] border border-[#222222] rounded-md px-5 py-8 flex flex-col items-center text-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-[#1a1a1a] border border-[#222222] flex items-center justify-center">
-                <UserPlus className="w-5 h-5 text-[#5e6ad2]" />
-              </div>
-              <div>
-                <p className="text-[14px] font-medium text-[#f5f5f5]">Your team is just getting started</p>
-                <p className="text-[13px] text-[#555555] mt-0.5">
-                  Create your first specialized agent to start building your AI workforce.
-                </p>
-              </div>
-              <Link
-                href="/agents"
-                className="flex items-center gap-1.5 bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors font-medium mt-1"
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                Create First Agent
-              </Link>
-            </div>
-          )}
-
-          {/* Grouped by division */}
-          {!isOnlyMain &&
-            Object.entries(grouped).map(([division, divAgents]) => (
-              <div key={division}>
-                <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium mb-2">
-                  {division} — {divAgents.length}
-                </p>
-                <div className="space-y-2">
-                  {divAgents.map((agent) => (
-                    <AgentCard
-                      key={agent.agent_id}
-                      agent={agent}
-                      isMain={false}
-                      onRetire={handleRetire}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
+          <div
+            className="fixed inset-0 bg-black/40 z-40"
+            onClick={() => setSelectedAgent(null)}
+          />
+          <AgentSidebar
+            agent={selectedAgent}
+            agents={agents}
+            onClose={() => setSelectedAgent(null)}
+          />
         </>
       )}
     </div>
