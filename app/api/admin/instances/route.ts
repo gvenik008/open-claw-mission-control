@@ -2,16 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { masterDb, genId } from "@/lib/master-db";
 import { execSync } from "child_process";
 
+async function checkPort(host: string, port: number): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(`http://${host}:${port}/`, { signal: controller.signal });
+    clearTimeout(timer);
+    return res.ok;
+  } catch { return false; }
+}
+
 export async function GET() {
   const rows = masterDb.prepare("SELECT * FROM instances ORDER BY created_at DESC").all();
-  // Check live status for each
-  const instances = (rows as any[]).map((r) => {
-    let gwAlive = false;
-    let mcAlive = false;
-    try { execSync(`curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${r.gateway_port}/ 2>/dev/null | grep -q 200`, { timeout: 2000 }); gwAlive = true; } catch {}
-    try { execSync(`curl -s -o /dev/null -w "%{http_code}" http://localhost:${r.mc_port}/ 2>/dev/null | grep -q 200`, { timeout: 2000 }); mcAlive = true; } catch {}
+  const instances = await Promise.all((rows as any[]).map(async (r) => {
+    const gwAlive = await checkPort("127.0.0.1", r.gateway_port);
+    const mcAlive = await checkPort("127.0.0.1", r.mc_port);
     return { ...r, bot_token: "***", api_key: "***", gwAlive, mcAlive };
-  });
+  }));
   return NextResponse.json(instances);
 }
 
