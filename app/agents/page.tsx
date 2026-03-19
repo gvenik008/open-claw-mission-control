@@ -1167,8 +1167,8 @@ function Badge({ label }: { label: string }) {
 function EditAgentView({
   agent,
   agents,
-  skills: allSkills,
-  tools: allTools,
+  skills: initialSkills,
+  tools: initialTools,
   onBack,
   onSaved,
 }: {
@@ -1192,6 +1192,21 @@ function EditAgentView({
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Live registry lists (refreshable after add/delete)
+  const [allSkills, setAllSkills] = useState<Skill[]>(initialSkills);
+  const [allTools, setAllTools] = useState<Tool[]>(initialTools);
+
+  // Inline add forms
+  const [showAddSkill, setShowAddSkill] = useState(false);
+  const [newSkill, setNewSkill] = useState({ name: "", id: "", category: "", description: "", requiredTools: "" as string, promptAdditions: "" });
+  const [showAddTool, setShowAddTool] = useState(false);
+  const [newTool, setNewTool] = useState({ name: "", id: "", category: "", description: "" });
+
+  const refreshSkills = () =>
+    fetch("/api/skills").then((r) => r.json()).then(setAllSkills).catch(() => {});
+  const refreshTools = () =>
+    fetch("/api/tools").then((r) => r.json()).then(setAllTools).catch(() => {});
+
   const otherAgents = agents.filter(
     (a) => a.agent_id !== agent.agent_id && a.status === "active"
   );
@@ -1211,6 +1226,69 @@ function EditAgentView({
     setSelectedTools((prev) =>
       prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
     );
+
+  const toKebab = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-");
+
+  const handleAddSkill = async () => {
+    if (!newSkill.name.trim() || !newSkill.category.trim()) return;
+    const id = newSkill.id.trim() || toKebab(newSkill.name);
+    await fetch("/api/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id,
+        name: newSkill.name,
+        category: newSkill.category,
+        description: newSkill.description,
+        requiredTools: newSkill.requiredTools.split(",").map((s) => s.trim()).filter(Boolean),
+        promptAdditions: newSkill.promptAdditions,
+      }),
+    });
+    await refreshSkills();
+    setSelectedSkills((prev) => [...prev, id]);
+    setNewSkill({ name: "", id: "", category: "", description: "", requiredTools: "", promptAdditions: "" });
+    setShowAddSkill(false);
+  };
+
+  const handleDeleteSkill = async (id: string) => {
+    await fetch("/api/skills", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await refreshSkills();
+    setSelectedSkills((prev) => prev.filter((s) => s !== id));
+  };
+
+  const handleAddTool = async () => {
+    if (!newTool.name.trim()) return;
+    const id = newTool.id.trim() || toKebab(newTool.name);
+    await fetch("/api/tools", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id,
+        name: newTool.name,
+        category: newTool.category || "Custom",
+        description: newTool.description,
+      }),
+    });
+    await refreshTools();
+    setSelectedTools((prev) => [...prev, id]);
+    setNewTool({ name: "", id: "", category: "", description: "" });
+    setShowAddTool(false);
+  };
+
+  const handleDeleteTool = async (id: string) => {
+    await fetch("/api/tools", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await refreshTools();
+    setSelectedTools((prev) => prev.filter((t) => t !== id));
+  };
 
   const save = async () => {
     setSaving(true);
@@ -1420,44 +1498,125 @@ function EditAgentView({
       <div className="bg-[#111111] border border-[#222222] rounded-md p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-[13px] font-semibold text-[#f5f5f5]">Skills</h2>
-          {selectedSkills.length > 0 && (
-            <span className="text-[12px] text-[#5e6ad2] font-medium">
-              {selectedSkills.length} selected
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {selectedSkills.length > 0 && (
+              <span className="text-[12px] text-[#5e6ad2] font-medium">
+                {selectedSkills.length} selected
+              </span>
+            )}
+            <button
+              onClick={() => setShowAddSkill(!showAddSkill)}
+              className="flex items-center gap-1 text-[12px] text-[#5e6ad2] hover:text-[#6c78e0] transition-colors"
+            >
+              {showAddSkill ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+              {showAddSkill ? "Cancel" : "Add New"}
+            </button>
+          </div>
         </div>
+
+        {/* Inline add skill form */}
+        {showAddSkill && (
+          <div className="bg-[#0a0a0a] border border-[#5e6ad2]/30 rounded-md p-4 space-y-3">
+            <p className="text-[11px] font-medium text-[#5e6ad2] uppercase tracking-wider">New Skill</p>
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                className="bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                placeholder="Skill name *"
+                value={newSkill.name}
+                onChange={(e) => setNewSkill({ ...newSkill, name: e.target.value, id: toKebab(e.target.value) })}
+              />
+              <input
+                className="bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] font-mono focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                placeholder="ID (auto-generated)"
+                value={newSkill.id}
+                onChange={(e) => setNewSkill({ ...newSkill, id: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                className="bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                placeholder="Category * (e.g. QA & Testing)"
+                value={newSkill.category}
+                onChange={(e) => setNewSkill({ ...newSkill, category: e.target.value })}
+              />
+              <input
+                className="bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                placeholder="Required tools (comma-separated)"
+                value={newSkill.requiredTools}
+                onChange={(e) => setNewSkill({ ...newSkill, requiredTools: e.target.value })}
+              />
+            </div>
+            <textarea
+              className="w-full bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors resize-none"
+              placeholder="Description"
+              rows={2}
+              value={newSkill.description}
+              onChange={(e) => setNewSkill({ ...newSkill, description: e.target.value })}
+            />
+            <textarea
+              className="w-full bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors resize-none"
+              placeholder="Prompt additions (system prompt text for this skill)"
+              rows={2}
+              value={newSkill.promptAdditions}
+              onChange={(e) => setNewSkill({ ...newSkill, promptAdditions: e.target.value })}
+            />
+            <button
+              onClick={handleAddSkill}
+              disabled={!newSkill.name.trim() || !newSkill.category.trim()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] bg-[#5e6ad2] hover:bg-[#6c78e0] text-white font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              <Plus className="w-3 h-3" />
+              Add to Registry
+            </button>
+          </div>
+        )}
+
         {allSkills.length > 0 ? (
-          <div className="grid grid-cols-2 gap-2 max-h-[250px] overflow-y-auto pr-1">
+          <div className="grid grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-1">
             {allSkills.map((skill) => {
               const isSelected = selectedSkills.includes(skill.id);
               return (
-                <button
+                <div
                   key={skill.id}
-                  onClick={() => toggleSkill(skill.id)}
                   className={clsx(
-                    "text-left p-3 rounded-md border transition-all",
+                    "relative text-left p-3 rounded-md border transition-all group",
                     isSelected
                       ? "border-[#5e6ad2] bg-[#5e6ad2]/8"
                       : "border-[#222222] bg-[#1a1a1a] hover:border-[#2a2a2a] hover:bg-[#1f1f1f]"
                   )}
                 >
-                  <div className="flex items-start justify-between gap-2 mb-1">
-                    <span className="text-[13px] font-medium text-[#f5f5f5] leading-snug">
-                      {skill.name}
-                    </span>
-                    {isSelected && (
-                      <Check className="w-3.5 h-3.5 text-[#5e6ad2] shrink-0 mt-0.5" />
-                    )}
-                  </div>
-                  <p className="text-[12px] text-[#888888] leading-snug line-clamp-2">
-                    {skill.description}
-                  </p>
-                </button>
+                  <button
+                    onClick={() => toggleSkill(skill.id)}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <span className="text-[13px] font-medium text-[#f5f5f5] leading-snug">
+                        {skill.name}
+                      </span>
+                      {isSelected && (
+                        <Check className="w-3.5 h-3.5 text-[#5e6ad2] shrink-0 mt-0.5" />
+                      )}
+                    </div>
+                    <p className="text-[12px] text-[#888888] leading-snug line-clamp-2">
+                      {skill.description}
+                    </p>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm(`Remove "${skill.name}" from registry?`)) handleDeleteSkill(skill.id);
+                    }}
+                    className="absolute top-2 right-2 p-1 rounded-md text-[#333333] hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+                    title="Remove from registry"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
               );
             })}
           </div>
         ) : (
-          <p className="text-[12px] text-[#555555]">No skills available in registry.</p>
+          <p className="text-[12px] text-[#555555]">No skills in registry. Add one above.</p>
         )}
       </div>
 
@@ -1465,41 +1624,111 @@ function EditAgentView({
       <div className="bg-[#111111] border border-[#222222] rounded-md p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-[13px] font-semibold text-[#f5f5f5]">Tools</h2>
-          {selectedTools.length > 0 && (
-            <span className="text-[12px] text-[#5e6ad2] font-medium">
-              {selectedTools.length} selected
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {selectedTools.length > 0 && (
+              <span className="text-[12px] text-[#5e6ad2] font-medium">
+                {selectedTools.length} selected
+              </span>
+            )}
+            <button
+              onClick={() => setShowAddTool(!showAddTool)}
+              className="flex items-center gap-1 text-[12px] text-[#5e6ad2] hover:text-[#6c78e0] transition-colors"
+            >
+              {showAddTool ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+              {showAddTool ? "Cancel" : "Add New"}
+            </button>
+          </div>
         </div>
+
+        {/* Inline add tool form */}
+        {showAddTool && (
+          <div className="bg-[#0a0a0a] border border-[#5e6ad2]/30 rounded-md p-4 space-y-3">
+            <p className="text-[11px] font-medium text-[#5e6ad2] uppercase tracking-wider">New Tool</p>
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                className="bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                placeholder="Tool name *"
+                value={newTool.name}
+                onChange={(e) => setNewTool({ ...newTool, name: e.target.value, id: toKebab(e.target.value) })}
+              />
+              <input
+                className="bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] font-mono focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                placeholder="ID (auto-generated)"
+                value={newTool.id}
+                onChange={(e) => setNewTool({ ...newTool, id: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                className="bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                placeholder="Category (e.g. Web, System)"
+                value={newTool.category}
+                onChange={(e) => setNewTool({ ...newTool, category: e.target.value })}
+              />
+              <input
+                className="bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-1.5 text-[12px] text-[#f5f5f5] placeholder-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                placeholder="Description"
+                value={newTool.description}
+                onChange={(e) => setNewTool({ ...newTool, description: e.target.value })}
+              />
+            </div>
+            <button
+              onClick={handleAddTool}
+              disabled={!newTool.name.trim()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] bg-[#5e6ad2] hover:bg-[#6c78e0] text-white font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              <Plus className="w-3 h-3" />
+              Add to Registry
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-1">
           {allTools.map((tool) => {
             const isSelected = selectedTools.includes(tool.id);
             return (
-              <button
+              <div
                 key={tool.id}
-                onClick={() => toggleTool(tool.id)}
                 className={clsx(
-                  "text-left p-3 rounded-md border transition-all",
+                  "relative text-left p-3 rounded-md border transition-all group",
                   isSelected
                     ? "border-[#5e6ad2] bg-[#5e6ad2]/8"
                     : "border-[#222222] bg-[#1a1a1a] hover:border-[#2a2a2a] hover:bg-[#1f1f1f]"
                 )}
               >
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  <span className="text-[13px] font-medium text-[#f5f5f5] leading-snug">
-                    {tool.name}
-                  </span>
-                  {isSelected && (
-                    <Check className="w-3.5 h-3.5 text-[#5e6ad2] shrink-0 mt-0.5" />
-                  )}
-                </div>
-                <p className="text-[12px] text-[#888888] leading-snug line-clamp-2">
-                  {tool.description}
-                </p>
-              </button>
+                <button
+                  onClick={() => toggleTool(tool.id)}
+                  className="w-full text-left"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <span className="text-[13px] font-medium text-[#f5f5f5] leading-snug">
+                      {tool.name}
+                    </span>
+                    {isSelected && (
+                      <Check className="w-3.5 h-3.5 text-[#5e6ad2] shrink-0 mt-0.5" />
+                    )}
+                  </div>
+                  <p className="text-[12px] text-[#888888] leading-snug line-clamp-2">
+                    {tool.description}
+                  </p>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm(`Remove "${tool.name}" from registry?`)) handleDeleteTool(tool.id);
+                  }}
+                  className="absolute top-2 right-2 p-1 rounded-md text-[#333333] hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+                  title="Remove from registry"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
             );
           })}
         </div>
+        {allTools.length === 0 && (
+          <p className="text-[12px] text-[#555555]">No tools in registry. Add one above.</p>
+        )}
       </div>
 
       {/* Save */}
