@@ -1,166 +1,190 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { Plus, X } from "lucide-react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { Plus, X, Loader2, RefreshCw } from "lucide-react";
 import clsx from "clsx";
 
-type Priority = "P0" | "P1" | "P2" | "P3";
-type Column = "Backlog" | "In Progress" | "Review" | "Done";
+type Priority = "urgent" | "high" | "medium" | "low";
+type Status = "pending" | "in_progress" | "review" | "done" | "cancelled";
 
 interface Task {
   id: string;
   title: string;
   description: string;
-  assignee: string;
+  assignee: string | null;
   priority: Priority;
-  column: Column;
-  createdAt: string;
+  status: Status;
+  tags: string[];
+  created_by: string;
+  due_date: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Agent {
+  agent_id: string;
+  name: string;
+  status: string;
 }
 
 interface ActivityItem {
   id: string;
-  text: string;
-  time: string;
+  agent_id: string;
+  action: string;
+  detail: string;
+  created_at: string;
 }
 
-const COLUMNS: Column[] = ["Backlog", "In Progress", "Review", "Done"];
-const AGENTS = ["Gvenik", "QA Lead", "Functional QA", "Adversarial QA"];
-const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
-
-const PRIORITY_COLORS: Record<Priority, string> = {
-  P0: "bg-red-500/10 text-red-400",
-  P1: "bg-orange-500/10 text-orange-400",
-  P2: "bg-yellow-500/10 text-yellow-400",
-  P3: "bg-[#222222] text-[#888888]",
-};
-
-const DEFAULT_TASKS: Task[] = [
-  {
-    id: "task-1",
-    title: "Define severity matrix",
-    description: "Create P0–P3 severity definitions",
-    assignee: "QA Lead",
-    priority: "P1",
-    column: "Done",
-    createdAt: "2026-03-17",
-  },
-  {
-    id: "task-2",
-    title: "Write smoke test suite",
-    description: "Cover happy paths for core flows",
-    assignee: "Functional QA",
-    priority: "P1",
-    column: "In Progress",
-    createdAt: "2026-03-18",
-  },
-  {
-    id: "task-3",
-    title: "Adversarial fuzzing on API",
-    description: "Fuzz API endpoints with edge inputs",
-    assignee: "Adversarial QA",
-    priority: "P0",
-    column: "Backlog",
-    createdAt: "2026-03-18",
-  },
-  {
-    id: "task-4",
-    title: "Mission Control UI review",
-    description: "Review all pages for design consistency",
-    assignee: "Gvenik",
-    priority: "P2",
-    column: "Review",
-    createdAt: "2026-03-18",
-  },
+const COLUMNS: { key: Status; label: string }[] = [
+  { key: "pending", label: "Backlog" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "review", label: "Review" },
+  { key: "done", label: "Done" },
 ];
 
+const PRIORITIES: Priority[] = ["urgent", "high", "medium", "low"];
+
+const PRIORITY_COLORS: Record<Priority, string> = {
+  urgent: "bg-red-500/10 text-red-400",
+  high: "bg-orange-500/10 text-orange-400",
+  medium: "bg-yellow-500/10 text-yellow-400",
+  low: "bg-[#222222] text-[#888888]",
+};
+
+const PRIORITY_LABELS: Record<Priority, string> = {
+  urgent: "P0",
+  high: "P1",
+  medium: "P2",
+  low: "P3",
+};
+
 function formatDate(str: string) {
-  const d = new Date(str);
+  if (!str) return "";
+  const d = new Date(str.replace(" ", "T"));
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function timeAgo(str: string) {
+  if (!str) return "";
+  const now = Date.now();
+  const then = new Date(str.replace(" ", "T")).getTime();
+  const mins = Math.floor((now - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const [form, setForm] = useState({
     title: "",
     description: "",
-    assignee: AGENTS[0],
-    priority: "P2" as Priority,
+    assignee: "",
+    priority: "medium" as Priority,
   });
-  const dragOverCol = useRef<Column | null>(null);
+  const dragOverCol = useRef<Status | null>(null);
 
-  useEffect(() => {
+  const loadData = useCallback(async () => {
     try {
-      const stored = localStorage.getItem("mc-tasks");
-      if (stored) {
-        setTasks(JSON.parse(stored));
-      } else {
-        setTasks(DEFAULT_TASKS);
-        localStorage.setItem("mc-tasks", JSON.stringify(DEFAULT_TASKS));
-      }
+      const [tasksRes, agentsRes, actRes] = await Promise.all([
+        fetch("/api/tasks"),
+        fetch("/api/deploy-agent"),
+        fetch("/api/activities?limit=15"),
+      ]);
+      const tasksData = await tasksRes.json();
+      const agentsData = await agentsRes.json();
+      const actData = await actRes.json();
+      setTasks(Array.isArray(tasksData) ? tasksData : []);
+      setAgents(Array.isArray(agentsData) ? agentsData.filter((a: Agent) => a.status === "active") : []);
+      setActivities(Array.isArray(actData) ? actData : []);
     } catch {
-      setTasks(DEFAULT_TASKS);
+      // silently fail
+    } finally {
+      setLoading(false);
     }
-    setActivity([
-      { id: "a1", text: "Adversarial QA created task 'API fuzzing'", time: "2m ago" },
-      { id: "a2", text: "Gvenik moved task to Review", time: "15m ago" },
-      { id: "a3", text: "Functional QA started smoke tests", time: "1h ago" },
-      { id: "a4", text: "QA Lead completed severity matrix", time: "3h ago" },
-    ]);
   }, []);
 
-  function saveTasks(updated: Task[]) {
-    setTasks(updated);
-    localStorage.setItem("mc-tasks", JSON.stringify(updated));
+  useEffect(() => {
+    loadData();
+    // Auto-refresh every 30s
+    const interval = setInterval(loadData, 30000);
+    return () => clearInterval(interval);
+  }, [loadData]);
+
+  function agentName(agentId: string | null): string {
+    if (!agentId) return "Unassigned";
+    const agent = agents.find((a) => a.agent_id === agentId);
+    return agent?.name || agentId;
   }
 
-  function addActivity(text: string) {
-    const item: ActivityItem = { id: Date.now().toString(), text, time: "just now" };
-    setActivity((prev) => [item, ...prev.slice(0, 9)]);
-  }
-
-  function handleCreate() {
+  async function handleCreate() {
     if (!form.title.trim()) return;
-    const task: Task = {
-      id: "task-" + Date.now(),
-      title: form.title,
-      description: form.description,
-      assignee: form.assignee,
-      priority: form.priority,
-      column: "Backlog",
-      createdAt: new Date().toISOString().split("T")[0],
-    };
-    const updated = [...tasks, task];
-    saveTasks(updated);
-    addActivity(`${form.assignee} created task '${form.title}'`);
-    setForm({ title: "", description: "", assignee: AGENTS[0], priority: "P2" });
-    setShowModal(false);
+    setCreating(true);
+    try {
+      await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: form.title,
+          description: form.description,
+          assignee: form.assignee || null,
+          priority: form.priority,
+        }),
+      });
+      setForm({ title: "", description: "", assignee: "", priority: "medium" });
+      setShowModal(false);
+      await loadData();
+    } catch {
+      // silently fail
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function updateTaskStatus(taskId: string, newStatus: Status) {
+    await fetch("/api/tasks", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: taskId, status: newStatus }),
+    });
+    await loadData();
   }
 
   function onDragStart(id: string) {
     setDragging(id);
   }
 
-  function onDragOver(e: React.DragEvent, col: Column) {
+  function onDragOver(e: React.DragEvent, col: Status) {
     e.preventDefault();
     dragOverCol.current = col;
   }
 
-  function onDrop(col: Column) {
+  function onDrop(col: Status) {
     if (!dragging) return;
     const task = tasks.find((t) => t.id === dragging);
-    if (task && task.column !== col) {
-      const updated = tasks.map((t) => (t.id === dragging ? { ...t, column: col } : t));
-      saveTasks(updated);
-      addActivity(`Moved '${task.title}' to ${col}`);
+    if (task && task.status !== col) {
+      updateTaskStatus(dragging, col);
     }
     setDragging(null);
     dragOverCol.current = null;
   }
 
-  const byColumn = (col: Column) => tasks.filter((t) => t.column === col);
+  const byColumn = (status: Status) =>
+    tasks
+      .filter((t) => t.status === status)
+      .sort((a, b) => {
+        const pOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
+        return pOrder[a.priority] - pOrder[b.priority];
+      });
 
   return (
     <div className="flex gap-4 h-full">
@@ -170,32 +194,42 @@ export default function TasksPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Tasks</h1>
-            <p className="text-sm text-[#555555] mt-0.5">Kanban board</p>
+            <p className="text-sm text-[#555555] mt-0.5">
+              {loading ? "Loading…" : `${tasks.length} task${tasks.length !== 1 ? "s" : ""}`}
+            </p>
           </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            New Task
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setLoading(true); loadData(); }}
+              className="flex items-center gap-1.5 text-[#555555] hover:text-[#888888] text-xs px-2 py-1.5 rounded-md hover:bg-[#1a1a1a] transition-colors"
+            >
+              <RefreshCw className={clsx("w-3.5 h-3.5", loading && "animate-spin")} />
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-1.5 bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors font-medium"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              New Task
+            </button>
+          </div>
         </div>
 
         {/* Columns */}
         <div className="grid grid-cols-4 gap-3">
-          {COLUMNS.map((col) => {
-            const colTasks = byColumn(col);
+          {COLUMNS.map(({ key, label }) => {
+            const colTasks = byColumn(key);
             return (
               <div
-                key={col}
+                key={key}
                 className="flex flex-col gap-2 min-h-48"
-                onDragOver={(e) => onDragOver(e, col)}
-                onDrop={() => onDrop(col)}
+                onDragOver={(e) => onDragOver(e, key)}
+                onDrop={() => onDrop(key)}
               >
                 {/* Column header */}
                 <div className="flex items-center justify-between px-0 py-1">
                   <span className="text-[10px] uppercase tracking-wider text-[#555555] font-medium">
-                    {col}
+                    {label}
                   </span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888]">
                     {colTasks.length}
@@ -214,22 +248,44 @@ export default function TasksPage() {
                     )}
                   >
                     <p className="text-[13px] text-[#f5f5f5] leading-snug mb-2">{task.title}</p>
+                    {task.description && (
+                      <p className="text-[11px] text-[#555555] leading-snug mb-2 line-clamp-2">{task.description}</p>
+                    )}
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={clsx("text-[10px] px-1.5 py-0.5 rounded-sm font-medium", PRIORITY_COLORS[task.priority])}>
-                        {task.priority}
+                      <span
+                        className={clsx(
+                          "text-[10px] px-1.5 py-0.5 rounded-sm font-medium",
+                          PRIORITY_COLORS[task.priority]
+                        )}
+                      >
+                        {PRIORITY_LABELS[task.priority]}
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888] truncate max-w-[80px]">
-                        {task.assignee}
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888] truncate max-w-[100px]">
+                        {agentName(task.assignee)}
                       </span>
                     </div>
-                    <p className="text-[11px] text-[#555555] mt-1.5">{formatDate(task.createdAt)}</p>
+                    {task.tags && task.tags.length > 0 && (
+                      <div className="flex gap-1 mt-1.5 flex-wrap">
+                        {task.tags.slice(0, 3).map((tag) => (
+                          <span
+                            key={tag}
+                            className="text-[9px] px-1 py-0.5 rounded-sm bg-[#5e6ad2]/10 text-[#5e6ad2]"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[10px] text-[#444444] mt-1.5">{formatDate(task.created_at)}</p>
                   </div>
                 ))}
 
                 {/* Drop zone placeholder */}
                 {colTasks.length === 0 && (
                   <div className="border border-dashed border-[#2a2a2a] rounded-md h-16 flex items-center justify-center">
-                    <span className="text-[11px] text-[#555555]">Drop here</span>
+                    <span className="text-[11px] text-[#555555]">
+                      {loading ? "Loading…" : "Drop here"}
+                    </span>
                   </div>
                 )}
               </div>
@@ -239,23 +295,35 @@ export default function TasksPage() {
       </div>
 
       {/* Activity feed */}
-      <div className="w-52 shrink-0">
+      <div className="w-56 shrink-0">
         <div className="bg-[#111111] border border-[#222222] rounded-md overflow-hidden">
-          <div className="px-3 py-2.5 border-b border-[#222222]">
+          <div className="px-3 py-2.5 border-b border-[#222222] flex items-center justify-between">
             <p className="text-[10px] uppercase tracking-wider text-[#555555] font-medium">Activity</p>
+            <span className="text-[10px] text-[#444444]">{activities.length}</span>
           </div>
-          <div className="divide-y divide-[#222222]">
-            {activity.map((item) => (
+          <div className="divide-y divide-[#222222] max-h-[500px] overflow-y-auto">
+            {activities.length === 0 && (
+              <div className="px-3 py-4 text-center">
+                <p className="text-[11px] text-[#555555]">No activity yet</p>
+              </div>
+            )}
+            {activities.map((item) => (
               <div key={item.id} className="px-3 py-2.5 hover:bg-[#1a1a1a] transition-colors duration-150">
-                <p className="text-[11px] text-[#888888] leading-snug">{item.text}</p>
-                <p className="text-[10px] text-[#555555] mt-1">{item.time}</p>
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="text-[10px] font-medium text-[#888888]">
+                    {agentName(item.agent_id)}
+                  </span>
+                  <span className="text-[9px] text-[#444444]">· {item.action.replace(/_/g, " ")}</span>
+                </div>
+                <p className="text-[11px] text-[#888888] leading-snug">{item.detail}</p>
+                <p className="text-[9px] text-[#444444] mt-0.5">{timeAgo(item.created_at)}</p>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Modal */}
+      {/* Create Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-[#111111] border border-[#222222] rounded-md w-96 p-5 space-y-4">
@@ -269,7 +337,7 @@ export default function TasksPage() {
             <div className="space-y-3">
               <div>
                 <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1">
-                  Title
+                  Title *
                 </label>
                 <input
                   autoFocus
@@ -301,9 +369,10 @@ export default function TasksPage() {
                     onChange={(e) => setForm({ ...form, assignee: e.target.value })}
                     className="w-full bg-[#0a0a0a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] focus:outline-none focus:border-[#5e6ad2]"
                   >
-                    {AGENTS.map((a) => (
-                      <option key={a} value={a}>
-                        {a}
+                    <option value="">Unassigned</option>
+                    {agents.map((a) => (
+                      <option key={a.agent_id} value={a.agent_id}>
+                        {a.name}
                       </option>
                     ))}
                   </select>
@@ -319,7 +388,7 @@ export default function TasksPage() {
                   >
                     {PRIORITIES.map((p) => (
                       <option key={p} value={p}>
-                        {p}
+                        {PRIORITY_LABELS[p]} — {p}
                       </option>
                     ))}
                   </select>
@@ -336,8 +405,10 @@ export default function TasksPage() {
               </button>
               <button
                 onClick={handleCreate}
-                className="bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors"
+                disabled={creating || !form.title.trim()}
+                className="flex items-center gap-1.5 bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors font-medium disabled:opacity-50"
               >
+                {creating && <Loader2 className="w-3 h-3 animate-spin" />}
                 Create Task
               </button>
             </div>
