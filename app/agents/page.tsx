@@ -1162,6 +1162,376 @@ function Badge({ label }: { label: string }) {
   );
 }
 
+// ─── Edit Agent View ──────────────────────────────────────────────────────────
+
+function EditAgentView({
+  agent,
+  agents,
+  skills: allSkills,
+  tools: allTools,
+  onBack,
+  onSaved,
+}: {
+  agent: Agent;
+  agents: Agent[];
+  skills: Skill[];
+  tools: Tool[];
+  onBack: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(agent.name);
+  const [role, setRole] = useState(agent.role);
+  const [division, setDivision] = useState(agent.division || "");
+  const [reportsTo, setReportsTo] = useState(agent.lead || "");
+  const [model, setModel] = useState(
+    agent.model?.replace("anthropic/", "") || "claude-sonnet-4-6"
+  );
+  const [personality, setPersonality] = useState(agent.personality || "");
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(agent.skills || []);
+  const [selectedTools, setSelectedTools] = useState<string[]>(agent.tools || []);
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const otherAgents = agents.filter(
+    (a) => a.agent_id !== agent.agent_id && a.status === "active"
+  );
+
+  const costColors: Record<string, string> = {
+    high: "text-amber-400",
+    medium: "text-[#5e6ad2]",
+    low: "text-emerald-500",
+  };
+
+  const toggleSkill = (id: string) =>
+    setSelectedSkills((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
+    );
+
+  const toggleTool = (id: string) =>
+    setSelectedTools((prev) =>
+      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+    );
+
+  const save = async () => {
+    setSaving(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/deploy-agent", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: agent.agent_id,
+          name,
+          role,
+          division,
+          reportsTo,
+          model,
+          personality,
+          skills: selectedSkills,
+          tools: selectedTools,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setResult({ success: true, message: data.message || "Agent updated." });
+        setTimeout(() => onSaved(), 1000);
+      } else {
+        setResult({ success: false, message: data.error || "Update failed." });
+      }
+    } catch (e: any) {
+      setResult({ success: false, message: e.message || "Network error." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-5">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-[13px] text-[#888888] hover:text-[#f5f5f5] transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </button>
+        <div>
+          <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">
+            Edit {agent.name}
+          </h1>
+          <p className="text-sm text-[#555555] mt-0.5 font-mono">{agent.agent_id}</p>
+        </div>
+      </div>
+
+      {/* Result banner */}
+      {result && (
+        <div
+          className={clsx(
+            "flex items-start gap-3 p-3 rounded-md border text-[13px]",
+            result.success
+              ? "bg-emerald-500/8 border-emerald-500/25 text-emerald-400"
+              : "bg-red-500/8 border-red-500/25 text-red-400"
+          )}
+        >
+          {result.success ? (
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+          ) : (
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          )}
+          <p>{result.message}</p>
+        </div>
+      )}
+
+      {/* Identity */}
+      <div className="bg-[#111111] border border-[#222222] rounded-md p-5 space-y-4">
+        <h2 className="text-[13px] font-semibold text-[#f5f5f5]">Identity</h2>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium text-[#888888] uppercase tracking-wider">
+              Name
+            </label>
+            <input
+              className="w-full bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium text-[#888888] uppercase tracking-wider">
+              Agent ID
+            </label>
+            <input
+              className="w-full bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#555555] font-mono cursor-not-allowed"
+              value={agent.agent_id}
+              disabled
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-medium text-[#888888] uppercase tracking-wider">
+            Role Description
+          </label>
+          <textarea
+            className="w-full bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] focus:outline-none focus:border-[#5e6ad2] transition-colors resize-none"
+            rows={2}
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium text-[#888888] uppercase tracking-wider">
+              Division
+            </label>
+            <select
+              className="w-full bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+              value={division}
+              onChange={(e) => setDivision(e.target.value)}
+            >
+              <option value="">Select division…</option>
+              {DIVISIONS.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium text-[#888888] uppercase tracking-wider">
+              Reports To
+            </label>
+            <select
+              className="w-full bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+              value={reportsTo}
+              onChange={(e) => setReportsTo(e.target.value)}
+            >
+              <option value="">None (reports to main)</option>
+              {otherAgents.map((a) => (
+                <option key={a.agent_id} value={a.agent_id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Model */}
+      <div className="bg-[#111111] border border-[#222222] rounded-md p-5 space-y-3">
+        <h2 className="text-[13px] font-semibold text-[#f5f5f5]">Model</h2>
+        <div className="space-y-2">
+          {MODELS.map((m) => {
+            const isSelected = model === m.id;
+            return (
+              <button
+                key={m.id}
+                onClick={() => setModel(m.id)}
+                className={clsx(
+                  "w-full text-left p-3 rounded-md border transition-all flex items-start gap-3",
+                  isSelected
+                    ? "border-[#5e6ad2] bg-[#5e6ad2]/8"
+                    : "border-[#222222] bg-[#1a1a1a] hover:border-[#2a2a2a]"
+                )}
+              >
+                <div
+                  className={clsx(
+                    "w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
+                    isSelected ? "border-[#5e6ad2]" : "border-[#333333]"
+                  )}
+                >
+                  {isSelected && <div className="w-2 h-2 rounded-full bg-[#5e6ad2]" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-[13px] font-medium text-[#f5f5f5]">{m.name}</span>
+                    <span
+                      className={clsx(
+                        "text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] ml-auto",
+                        costColors[m.costTier]
+                      )}
+                    >
+                      {m.costTier} cost
+                    </span>
+                  </div>
+                  <p className="text-[12px] text-[#888888]">{m.description}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Personality */}
+      <div className="bg-[#111111] border border-[#222222] rounded-md p-5 space-y-3">
+        <h2 className="text-[13px] font-semibold text-[#f5f5f5]">Personality</h2>
+        <textarea
+          className="w-full bg-[#1a1a1a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] placeholder-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors resize-none"
+          placeholder="Describe the agent's personality and working style…"
+          rows={3}
+          value={personality}
+          onChange={(e) => setPersonality(e.target.value)}
+        />
+      </div>
+
+      {/* Skills */}
+      <div className="bg-[#111111] border border-[#222222] rounded-md p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[13px] font-semibold text-[#f5f5f5]">Skills</h2>
+          {selectedSkills.length > 0 && (
+            <span className="text-[12px] text-[#5e6ad2] font-medium">
+              {selectedSkills.length} selected
+            </span>
+          )}
+        </div>
+        {allSkills.length > 0 ? (
+          <div className="grid grid-cols-2 gap-2 max-h-[250px] overflow-y-auto pr-1">
+            {allSkills.map((skill) => {
+              const isSelected = selectedSkills.includes(skill.id);
+              return (
+                <button
+                  key={skill.id}
+                  onClick={() => toggleSkill(skill.id)}
+                  className={clsx(
+                    "text-left p-3 rounded-md border transition-all",
+                    isSelected
+                      ? "border-[#5e6ad2] bg-[#5e6ad2]/8"
+                      : "border-[#222222] bg-[#1a1a1a] hover:border-[#2a2a2a] hover:bg-[#1f1f1f]"
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <span className="text-[13px] font-medium text-[#f5f5f5] leading-snug">
+                      {skill.name}
+                    </span>
+                    {isSelected && (
+                      <Check className="w-3.5 h-3.5 text-[#5e6ad2] shrink-0 mt-0.5" />
+                    )}
+                  </div>
+                  <p className="text-[12px] text-[#888888] leading-snug line-clamp-2">
+                    {skill.description}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-[12px] text-[#555555]">No skills available in registry.</p>
+        )}
+      </div>
+
+      {/* Tools */}
+      <div className="bg-[#111111] border border-[#222222] rounded-md p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[13px] font-semibold text-[#f5f5f5]">Tools</h2>
+          {selectedTools.length > 0 && (
+            <span className="text-[12px] text-[#5e6ad2] font-medium">
+              {selectedTools.length} selected
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-1">
+          {allTools.map((tool) => {
+            const isSelected = selectedTools.includes(tool.id);
+            return (
+              <button
+                key={tool.id}
+                onClick={() => toggleTool(tool.id)}
+                className={clsx(
+                  "text-left p-3 rounded-md border transition-all",
+                  isSelected
+                    ? "border-[#5e6ad2] bg-[#5e6ad2]/8"
+                    : "border-[#222222] bg-[#1a1a1a] hover:border-[#2a2a2a] hover:bg-[#1f1f1f]"
+                )}
+              >
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <span className="text-[13px] font-medium text-[#f5f5f5] leading-snug">
+                    {tool.name}
+                  </span>
+                  {isSelected && (
+                    <Check className="w-3.5 h-3.5 text-[#5e6ad2] shrink-0 mt-0.5" />
+                  )}
+                </div>
+                <p className="text-[12px] text-[#888888] leading-snug line-clamp-2">
+                  {tool.description}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Save */}
+      <div className="flex items-center justify-between pt-2 pb-6">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[13px] text-[#888888] hover:text-[#f5f5f5] hover:bg-[#1a1a1a] transition-all"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={save}
+          disabled={saving || !name.trim() || !role.trim()}
+          className={clsx(
+            "flex items-center justify-center gap-2 px-5 py-2 rounded-md text-[13px] font-medium transition-all",
+            "bg-[#5e6ad2] hover:bg-[#6c78e0] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          )}
+        >
+          {saving ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Saving…
+            </>
+          ) : (
+            "Save Changes"
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Create Agent Wizard ──────────────────────────────────────────────────────
 
 function CreateAgentWizard({
@@ -1443,6 +1813,30 @@ export default function AgentsPage() {
     );
   }
 
+  if (view === "edit" && selectedAgent) {
+    return (
+      <EditAgentView
+        agent={selectedAgent}
+        agents={agents}
+        skills={skills}
+        tools={tools}
+        onBack={() => setView("detail")}
+        onSaved={() => {
+          loadData();
+          // Refresh the selected agent data
+          fetch("/api/deploy-agent")
+            .then((r) => r.json())
+            .then((all: Agent[]) => {
+              const updated = all.find((a) => a.agent_id === selectedAgent.agent_id);
+              if (updated) setSelectedAgent(updated);
+              setView("detail");
+            })
+            .catch(() => setView("list"));
+        }}
+      />
+    );
+  }
+
   if (view === "detail" && selectedAgent) {
     return (
       <AgentDetailView
@@ -1453,7 +1847,7 @@ export default function AgentsPage() {
           setSelectedAgent(null);
         }}
         onEdit={() => {
-          // TODO: edit view
+          setView("edit");
         }}
         onRetire={handleRetire}
         retiring={retiring}
