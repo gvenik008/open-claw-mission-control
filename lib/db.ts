@@ -117,6 +117,18 @@ function initSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_id);
     CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
+
+    CREATE TABLE IF NOT EXISTS connections (
+      id         TEXT PRIMARY KEY,
+      source_id  TEXT NOT NULL,
+      target_id  TEXT NOT NULL,
+      type       TEXT NOT NULL DEFAULT 'reports_to',
+      label      TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(source_id, target_id, type)
+    );
+    CREATE INDEX IF NOT EXISTS idx_connections_source ON connections(source_id);
+    CREATE INDEX IF NOT EXISTS idx_connections_target ON connections(target_id);
   `);
 }
 
