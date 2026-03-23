@@ -76,10 +76,74 @@ export async function PATCH(req: NextRequest) {
       fields.push("updated_at = datetime('now')");
       db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = @id`).run(values);
     }
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as any;
+
+    // ─── AUTO-EXECUTE: When task moves to in_progress, trigger agent execution ───
+    if (updates.status === "in_progress" && task?.assignee) {
+      // Get agent info
+      const agent = db.prepare("SELECT * FROM agents WHERE agent_id = ?").get(task.assignee) as any;
+      const agentName = agent?.name || task.assignee;
+      
+      // Fire webhook to OpenClaw gateway to trigger execution
+      triggerTaskExecution(task, agentName).catch(() => {});
+      
+      // Log the auto-trigger
+      db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, ?, 'task_auto_triggered', ?)").run(
+        genId(), task.assignee, `Task "${task.title}" auto-triggered for ${agentName}`
+      );
+    }
+
     return NextResponse.json({ success: true, task });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+// ─── Trigger task execution via OpenClaw gateway wake event ───────────────────
+
+async function triggerTaskExecution(task: any, agentName: string) {
+  try {
+    // Read gateway config for auth token
+    const { readFileSync } = await import("fs");
+    const { join } = await import("path");
+    const configPath = join(process.env.HOME || "", ".openclaw", "openclaw.json");
+    const raw = readFileSync(configPath, "utf8");
+    
+    // Extract gateway token
+    const tokenMatch = raw.match(/token:\s*['"]([^'"]+)['"]/);
+    const token = tokenMatch?.[1];
+    if (!token) return;
+
+    // Send a wake event to the main session with task execution instructions
+    const message = `[AUTO-EXECUTE] Task moved to in_progress via Mission Control dashboard.\n\nTask ID: ${task.id}\nTitle: ${task.title}\nDescription: ${task.description || "No description"}\nAssigned to: ${agentName} (${task.assignee})\nPriority: ${task.priority}\n\nPlease spawn the assigned agent to execute this task. Use runTimeoutSeconds: ${task.description?.includes("browser") || task.description?.includes("test") || task.description?.includes("UI") ? 900 : 600}.`;
+
+    // Use the gateway's REST API to inject a wake event
+    await fetch("http://127.0.0.1:18789/api/sessions/agent:main:main/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
+      body: JSON.stringify({ message }),
+    }).catch(() => {
+      // Fallback: write to a trigger file that heartbeat can pick up
+      const triggerPath = join(process.env.HOME || "", ".openclaw", "workspace", "task-triggers.json");
+      let triggers: any[] = [];
+      try { triggers = JSON.parse(readFileSync(triggerPath, "utf8")); } catch {}
+      triggers.push({
+        taskId: task.id,
+        title: task.title,
+        description: task.description,
+        assignee: task.assignee,
+        agentName,
+        priority: task.priority,
+        triggeredAt: new Date().toISOString(),
+      });
+      const { writeFileSync } = require("fs");
+      writeFileSync(triggerPath, JSON.stringify(triggers, null, 2));
+    });
+  } catch {
+    // Silent fail — don't break the PATCH response
   }
 }
 
