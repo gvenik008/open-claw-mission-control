@@ -6,6 +6,7 @@ import {
   Check, ChevronRight, ChevronLeft, Search, Plus, X, Loader2, CheckCircle2,
   AlertCircle, Clock, Bot, Shield, Bug, Cpu, ArrowLeft, Pencil, Trash2,
   Users, Crown, Sparkles, Wrench, Activity, Zap, Eye,
+  BookOpen, GraduationCap, Target, ChevronDown, ChevronUp, Send,
 } from "lucide-react";
 import { MODELS, DIVISIONS, modelRecommendation, defaultPersonality } from "@/lib/agent-models";
 
@@ -339,6 +340,80 @@ function AgentDetailView({
 
   const [showRetireConfirm, setShowRetireConfirm] = useState(false);
 
+  // Training state
+  const [trainingEvents, setTrainingEvents] = useState<ActivityItem[]>([]);
+  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
+  const [lessonText, setLessonText] = useState("");
+  const [trainLoading, setTrainLoading] = useState(false);
+  const [trainToast, setTrainToast] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  // Performance stats
+  const doneTasks = agentTasks.filter((t) => t.status === "done").length;
+  const totalTasks = agentTasks.length;
+  const successRate = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : null;
+  const inProgressTasks = agentTasks.filter((t) => t.status === "in_progress").length;
+
+  // Fetch training events
+  useEffect(() => {
+    if (!agent.agent_id) return;
+    fetch(`/api/activities?agent_id=${agent.agent_id}&limit=20`)
+      .then((r) => r.json())
+      .then((data: ActivityItem[]) => {
+        const keywords = ["train", "skill", "lesson"];
+        const filtered = data.filter((e) =>
+          keywords.some((kw) => e.action.toLowerCase().includes(kw) || (e.detail || "").toLowerCase().includes(kw))
+        );
+        setTrainingEvents(filtered);
+      })
+      .catch(() => {});
+  }, [agent.agent_id]);
+
+  const toggleExpand = (id: string) => {
+    setExpandedEvents((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const submitLesson = async () => {
+    if (!lessonText.trim()) return;
+    setTrainLoading(true);
+    setTrainToast(null);
+    try {
+      const res = await fetch("/api/train", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agentId: agent.agent_id, action: "add_lesson", value: lessonText.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && (data.success !== false)) {
+        setTrainToast({ ok: true, msg: "Lesson added successfully!" });
+        setLessonText("");
+        // Refresh training events
+        const updated = await fetch(`/api/activities?agent_id=${agent.agent_id}&limit=20`).then((r) => r.json()).catch(() => []);
+        const keywords = ["train", "skill", "lesson"];
+        setTrainingEvents(updated.filter((e: ActivityItem) =>
+          keywords.some((kw) => e.action.toLowerCase().includes(kw) || (e.detail || "").toLowerCase().includes(kw))
+        ));
+      } else {
+        setTrainToast({ ok: false, msg: data.error || "Failed to add lesson" });
+      }
+    } catch (e: any) {
+      setTrainToast({ ok: false, msg: e.message || "Network error" });
+    } finally {
+      setTrainLoading(false);
+      setTimeout(() => setTrainToast(null), 4000);
+    }
+  };
+
+  function trainingIcon(action: string) {
+    const a = action.toLowerCase();
+    if (a.includes("lesson")) return <BookOpen className="w-3.5 h-3.5 text-[#5e6ad2]" />;
+    if (a.includes("skill")) return <Sparkles className="w-3.5 h-3.5 text-[#8b5cf6]" />;
+    return <GraduationCap className="w-3.5 h-3.5 text-[#10b981]" />;
+  }
+
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       {/* Back */}
@@ -375,6 +450,30 @@ function AgentDetailView({
                 <span className="text-[11px] px-2.5 py-1 rounded-full bg-[#1a1a1a] text-[#555555] font-mono">{agent.agent_id}</span>
                 <span className="text-[11px] text-[#444444]">Created {agent.created}</span>
               </div>
+
+              {/* Performance Stat Pills */}
+              {totalTasks > 0 && (
+                <div className="flex items-center gap-2 flex-wrap mt-3 pt-3 border-t border-[#1a1a1a]">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#1a1a1a] border border-[#222222]">
+                    <Target className="w-3 h-3 text-[#5e6ad2]" />
+                    <span className="text-[11px] text-[#f5f5f5] font-medium">{doneTasks}/{totalTasks}</span>
+                    <span className="text-[10px] text-[#555555]">tasks done</span>
+                  </div>
+                  {successRate !== null && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#1a1a1a] border border-[#222222]">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                      <span className="text-[11px] font-medium" style={{ color: successRate >= 70 ? "#10b981" : successRate >= 40 ? "#f59e0b" : "#ef4444" }}>{successRate}%</span>
+                      <span className="text-[10px] text-[#555555]">success</span>
+                    </div>
+                  )}
+                  {inProgressTasks > 0 && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#5e6ad2]/10 border border-[#5e6ad2]/20">
+                      <Clock className="w-3 h-3 text-[#5e6ad2]" />
+                      <span className="text-[11px] text-[#5e6ad2] font-medium">{inProgressTasks} active</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Live task progress in hero card */}
               {activeTask && (
@@ -545,6 +644,81 @@ function AgentDetailView({
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Training Section */}
+          <div className="bg-[#111111] border border-[#222222] rounded-xl p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <GraduationCap className="w-4 h-4 text-[#5e6ad2]" />
+              <h3 className="text-[12px] font-medium uppercase tracking-wider text-[#555555]">Training</h3>
+            </div>
+
+            {/* Training Timeline */}
+            {trainingEvents.length === 0 ? (
+              <p className="text-[11px] text-[#555555]">No training events yet</p>
+            ) : (
+              <div className="space-y-2">
+                {trainingEvents.map((e) => {
+                  const isExpanded = expandedEvents.has(e.id);
+                  return (
+                    <div key={e.id} className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg overflow-hidden">
+                      <button
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[#111111] transition-colors"
+                        onClick={() => toggleExpand(e.id)}
+                      >
+                        <div className="shrink-0">{trainingIcon(e.action)}</div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] text-[#f5f5f5] truncate">{e.action.replace(/_/g, " ")}</p>
+                          <p className="text-[9px] text-[#444444]">{timeAgo(e.created_at)}</p>
+                        </div>
+                        {isExpanded
+                          ? <ChevronUp className="w-3 h-3 text-[#555555] shrink-0" />
+                          : <ChevronDown className="w-3 h-3 text-[#555555] shrink-0" />
+                        }
+                      </button>
+                      {isExpanded && e.detail && (
+                        <div className="px-3 pb-2 pt-0 border-t border-[#1a1a1a]">
+                          <p className="text-[11px] text-[#888888] leading-relaxed whitespace-pre-wrap break-words">{e.detail}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Quick Train form */}
+            <div className="pt-2 border-t border-[#1a1a1a] space-y-2">
+              <p className="text-[10px] text-[#555555] uppercase tracking-wider font-medium">Add Lesson</p>
+              {trainToast && (
+                <div className={clsx(
+                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] border",
+                  trainToast.ok
+                    ? "bg-emerald-500/8 border-emerald-500/20 text-emerald-400"
+                    : "bg-red-500/8 border-red-500/20 text-red-400"
+                )}>
+                  {trainToast.ok ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
+                  {trainToast.msg}
+                </div>
+              )}
+              <textarea
+                className="w-full bg-[#0a0a0a] border border-[#222222] rounded-lg px-3 py-2 text-[12px] text-[#f5f5f5] placeholder-[#444444] focus:outline-none focus:border-[#5e6ad2] resize-none transition-colors"
+                placeholder="Type a lesson or instruction for this agent..."
+                rows={3}
+                value={lessonText}
+                onChange={(e) => setLessonText(e.target.value)}
+              />
+              <button
+                onClick={submitLesson}
+                disabled={trainLoading || !lessonText.trim()}
+                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-[12px] font-medium bg-[#5e6ad2] hover:bg-[#6c78e0] text-white disabled:opacity-40 transition-all"
+              >
+                {trainLoading
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Adding...</>
+                  : <><Send className="w-3.5 h-3.5" /> Add Lesson</>
+                }
+              </button>
+            </div>
           </div>
         </div>
       </div>
