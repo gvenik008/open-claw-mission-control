@@ -113,47 +113,30 @@ export async function PATCH(req: NextRequest) {
 
 async function triggerTaskExecution(task: any, agentName: string) {
   try {
-    // Read gateway config for auth token
-    const { readFileSync } = await import("fs");
+    const { readFileSync, writeFileSync } = await import("fs");
     const { join } = await import("path");
-    const configPath = join(process.env.HOME || "", ".openclaw", "openclaw.json");
-    const raw = readFileSync(configPath, "utf8");
     
-    // Extract gateway token
-    const tokenMatch = raw.match(/token:\s*['"]([^'"]+)['"]/);
-    const token = tokenMatch?.[1];
-    if (!token) return;
-
-    // Send a wake event to the main session with task execution instructions
-    const message = `[AUTO-EXECUTE] Task moved to in_progress via Mission Control dashboard.\n\nTask ID: ${task.id}\nTitle: ${task.title}\nDescription: ${task.description || "No description"}\nAssigned to: ${agentName} (${task.assignee})\nPriority: ${task.priority}\n\nPlease spawn the assigned agent to execute this task. Use runTimeoutSeconds: ${task.description?.includes("browser") || task.description?.includes("test") || task.description?.includes("UI") ? 900 : 600}.`;
-
-    // Use the gateway's REST API to inject a wake event
-    await fetch("http://127.0.0.1:18789/api/sessions/agent:main:main/send", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-      },
-      body: JSON.stringify({ message }),
-    }).catch(() => {
-      // Fallback: write to a trigger file that heartbeat can pick up
-      const triggerPath = join(process.env.HOME || "", ".openclaw", "workspace", "task-triggers.json");
-      let triggers: any[] = [];
-      try { triggers = JSON.parse(readFileSync(triggerPath, "utf8")); } catch {}
-      triggers.push({
-        taskId: task.id,
-        title: task.title,
-        description: task.description,
-        assignee: task.assignee,
-        agentName,
-        priority: task.priority,
-        triggeredAt: new Date().toISOString(),
-      });
-      const { writeFileSync } = require("fs");
-      writeFileSync(triggerPath, JSON.stringify(triggers, null, 2));
+    // Always write trigger file — this is the reliable mechanism
+    const triggerPath = join(process.env.HOME || "", ".openclaw", "workspace", "task-triggers.json");
+    let triggers: any[] = [];
+    try { triggers = JSON.parse(readFileSync(triggerPath, "utf8")); } catch {}
+    
+    // Don't duplicate — check if this task is already triggered
+    if (triggers.some((t: any) => t.taskId === task.id)) return;
+    
+    triggers.push({
+      taskId: task.id,
+      title: task.title,
+      description: task.description,
+      assignee: task.assignee,
+      agentName,
+      priority: task.priority,
+      timeoutSeconds: task.description?.toLowerCase().match(/browser|test|ui|qa|security/) ? 900 : 600,
+      triggeredAt: new Date().toISOString(),
     });
+    writeFileSync(triggerPath, JSON.stringify(triggers, null, 2));
   } catch {
-    // Silent fail — don't break the PATCH response
+    // Silent fail
   }
 }
 
