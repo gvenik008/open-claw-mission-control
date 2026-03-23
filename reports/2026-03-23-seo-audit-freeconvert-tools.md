@@ -1,0 +1,1 @@
+SEO Audit: freeconvert.tools — Full audit completed. Score: 52/100. Critical issues: www duplicate content, broken sitemap hreflang URLs, binary files in sitemap. See full report at mission-control/reports/2026-03-23-seo-audit-freeconvert-tools.md
