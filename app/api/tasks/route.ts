@@ -1,16 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, genId } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
+// Ensure telegram_id column exists (migration)
+try {
+  db.exec("ALTER TABLE tasks ADD COLUMN telegram_id TEXT DEFAULT NULL");
+} catch { /* column already exists */ }
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
   const assignee = searchParams.get("assignee");
+  const telegramId = searchParams.get("telegramId");
 
   let query = "SELECT * FROM tasks WHERE 1=1";
   const params: any[] = [];
 
   if (status) { query += " AND status = ?"; params.push(status); }
   if (assignee) { query += " AND assignee = ?"; params.push(assignee); }
+  if (telegramId) { query += " AND telegram_id = ?"; params.push(telegramId); }
 
   query += " ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at DESC";
 
@@ -20,18 +29,19 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { title, description, priority, assignee, dueDate, tags } = await req.json();
+    const { title, description, priority, assignee, dueDate, tags, telegramId } = await req.json();
     if (!title) return NextResponse.json({ error: "title is required" }, { status: 400 });
 
     const id = genId();
     db.prepare(`
-      INSERT INTO tasks (id, title, description, priority, assignee, due_date, tags)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, title, description || "", priority || "medium", assignee || null, dueDate || null, JSON.stringify(tags || []));
+      INSERT INTO tasks (id, title, description, priority, assignee, due_date, tags, telegram_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, title, description || "", priority || "medium", assignee || null, dueDate || null, JSON.stringify(tags || []), telegramId || null);
 
     // Log activity
-    db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, 'user', 'task_created', ?)").run(
-      genId(), `Task "${title}" created`
+    const creator = telegramId ? `telegram:${telegramId}` : "user";
+    db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, ?, 'task_created', ?)").run(
+      genId(), creator, `Task "${title}" created${telegramId ? ` by telegram:${telegramId}` : ""}`
     );
 
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
