@@ -69,7 +69,7 @@ export default function RadarPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Radar</h1>
+          <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Monitoring</h1>
           <p className="text-sm text-[#555555] mt-0.5">System health and agent performance metrics</p>
         </div>
         <button

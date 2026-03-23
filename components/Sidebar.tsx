@@ -81,7 +81,7 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-56 h-screen flex flex-col border-r border-[#222222] bg-[#111111] shrink-0">
+    <aside className="w-56 h-screen flex flex-col border-r border-[#222222] bg-[#111111] shrink-0 overflow-hidden">
       {/* Header */}
       <div className="px-3 py-4 border-b border-[#222222]">
         <div className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-[#1a1a1a] transition-colors cursor-pointer">
@@ -103,7 +103,8 @@ export default function Sidebar() {
               {group.label}
             </p>
             {group.items.map(({ href, label, icon: Icon }) => {
-              const active = pathname === href || (href !== "/" && pathname.startsWith(href));
+              // Exact match for most routes; startsWith only for non-admin multi-level routes
+              const active = pathname === href || (href !== "/" && !href.startsWith("/admin") && pathname.startsWith(href + "/"));
               return (
                 <Link
                   key={href}

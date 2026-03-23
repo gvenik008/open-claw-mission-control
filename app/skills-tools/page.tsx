@@ -271,7 +271,7 @@ export default function SkillsToolsPage() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#f5f5f5] tracking-tight">Skills & Tools</h1>
+          <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Skills & Tools</h1>
           <p className="text-sm text-[#555555] mt-1">
             {skills.length} skill{skills.length !== 1 ? "s" : ""} · {tools.length} tool{tools.length !== 1 ? "s" : ""} in registry
           </p>

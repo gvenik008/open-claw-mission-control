@@ -33,7 +33,7 @@ export default function Dashboard() {
     <div className="max-w-5xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#f5f5f5] tracking-tight">Master Control</h1>
+          <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Master Control</h1>
           <p className="text-sm text-[#555555] mt-0.5">Superadmin dashboard — manage all OpenClaw instances</p>
         </div>
         <button onClick={load} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] bg-[#1a1a1a] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] transition-all">

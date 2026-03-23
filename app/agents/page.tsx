@@ -90,7 +90,7 @@ function AgentListView({
       {/* Header with stats */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#f5f5f5] tracking-tight">Agents</h1>
+          <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Agents</h1>
           <p className="text-sm text-[#555555] mt-1">{active.length} active agent{active.length !== 1 ? "s" : ""}</p>
         </div>
         <button onClick={onCreate}

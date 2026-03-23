@@ -182,7 +182,7 @@ export default function PipelinePage() {
       </div>
 
       {/* Pipeline kanban */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="overflow-x-auto pb-2"><div className="grid grid-cols-4 gap-4 min-w-[800px]">
         {PIPELINE_STAGES.map((stage) => {
           const stageTasks = tasksByStage[stage.key] || [];
           return (
@@ -280,6 +280,7 @@ export default function PipelinePage() {
             </div>
           );
         })}
+      </div>
       </div>
     </div>
   );

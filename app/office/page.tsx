@@ -384,7 +384,7 @@ export default function OfficePage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">🏢 The Office</h1>
+          <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Office</h1>
           <p className="text-sm text-[#555555] mt-0.5">
             {workingAgents} working · {agents.length - workingAgents} idle · {activeTasks} active task{activeTasks !== 1 ? "s" : ""}
           </p>
