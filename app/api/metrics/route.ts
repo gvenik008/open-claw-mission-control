@@ -22,7 +22,7 @@ export async function GET() {
       SELECT a.agent_id, ag.name as agent_name, COUNT(*) as count, 
              MAX(a.created_at) as last_active
       FROM activities a
-      LEFT JOIN agents ag ON a.agent_id = ag.agent_id
+      INNER JOIN agents ag ON a.agent_id = ag.agent_id AND ag.status = 'active'
       GROUP BY a.agent_id
       ORDER BY count DESC
     `).all();
