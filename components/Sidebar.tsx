@@ -46,6 +46,7 @@ const NAV_GROUPS = [
     label: "Knowledge",
     items: [
       { href: "/memory", label: "Memory", icon: Brain },
+      { href: "/reports", label: "Reports", icon: ShieldCheck },
       { href: "/docs", label: "Docs", icon: FileText },
     ],
   },
