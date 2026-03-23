@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 try { db.exec("ALTER TABLE tasks ADD COLUMN telegram_id TEXT DEFAULT NULL"); } catch {}
 try { db.exec("ALTER TABLE tasks ADD COLUMN started_at TEXT DEFAULT NULL"); } catch {}
 try { db.exec("ALTER TABLE tasks ADD COLUMN timeout_seconds INTEGER DEFAULT 600"); } catch {}
+try { db.exec("ALTER TABLE tasks ADD COLUMN queue_position INTEGER DEFAULT NULL"); } catch {}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -88,19 +89,78 @@ export async function PATCH(req: NextRequest) {
     }
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as any;
 
-    // ─── AUTO-EXECUTE: When task moves to in_progress, trigger agent execution ───
+    // ─── AUTO-NOTIFY: When task moves to done, create a notification ───────────
+    if (updates.status === "done" && task) {
+      try {
+        const agent = db.prepare("SELECT name FROM agents WHERE agent_id = ?").get(task.assignee) as any;
+        const agentName = agent?.name || task.assignee || "Agent";
+        db.prepare(
+          "INSERT INTO notifications (id, type, title, message, link) VALUES (?, 'task_complete', ?, ?, ?)"
+        ).run(
+          genId(),
+          `Task completed: ${task.title}`,
+          `${agentName} finished: ${task.title}`,
+          `/tasks`
+        );
+      } catch {
+        // Non-fatal — notification failure should not break task update
+      }
+    }
+
+    // ─── AUTO-EXECUTE: When task moves to in_progress, check agent availability ───
     if (updates.status === "in_progress" && task?.assignee) {
-      // Get agent info
       const agent = db.prepare("SELECT * FROM agents WHERE agent_id = ?").get(task.assignee) as any;
       const agentName = agent?.name || task.assignee;
       
-      // Fire webhook to OpenClaw gateway to trigger execution
-      triggerTaskExecution(task, agentName).catch(() => {});
+      // Check if this agent already has a task running
+      const agentRunning = db.prepare(
+        "SELECT COUNT(*) as c FROM tasks WHERE assignee = ? AND status = 'in_progress' AND id != ?"
+      ).get(task.assignee, task.id) as any;
       
-      // Log the auto-trigger
-      db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, ?, 'task_auto_triggered', ?)").run(
-        genId(), task.assignee, `Task "${task.title}" auto-triggered for ${agentName}`
-      );
+      if (agentRunning.c > 0) {
+        // Agent is busy — queue this task instead of executing
+        const queuePos = agentRunning.c + 1;
+        db.prepare("UPDATE tasks SET queue_position = ?, updated_at = datetime('now') WHERE id = ?").run(queuePos, task.id);
+        
+        db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, ?, 'task_queued', ?)").run(
+          genId(), task.assignee, `Task "${task.title}" queued (position ${queuePos}) — ${agentName} is busy`
+        );
+      } else {
+        // Agent is free — execute immediately
+        triggerTaskExecution(task, agentName).catch(() => {});
+        
+        db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, ?, 'task_auto_triggered', ?)").run(
+          genId(), task.assignee, `Task "${task.title}" auto-triggered for ${agentName}`
+        );
+      }
+    }
+    
+    // ─── QUEUE PROMOTION: When a task completes, start the next queued task for that agent ───
+    if (updates.status === "done" && task?.assignee) {
+      const nextQueued = db.prepare(
+        "SELECT * FROM tasks WHERE assignee = ? AND status = 'in_progress' AND queue_position IS NOT NULL ORDER BY queue_position ASC LIMIT 1"
+      ).get(task.assignee) as any;
+      
+      if (nextQueued) {
+        const agent = db.prepare("SELECT * FROM agents WHERE agent_id = ?").get(task.assignee) as any;
+        const agentName = agent?.name || task.assignee;
+        
+        // Clear queue position and trigger execution
+        db.prepare("UPDATE tasks SET queue_position = NULL, started_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").run(nextQueued.id);
+        triggerTaskExecution(nextQueued, agentName).catch(() => {});
+        
+        // Reorder remaining queue
+        const remaining = db.prepare(
+          "SELECT id FROM tasks WHERE assignee = ? AND status = 'in_progress' AND queue_position IS NOT NULL ORDER BY queue_position ASC"
+        ).all(task.assignee) as any[];
+        remaining.forEach((r: any, i: number) => {
+          db.prepare("UPDATE tasks SET queue_position = ? WHERE id = ?").run(i + 1, r.id);
+        });
+        
+        db.prepare("INSERT INTO activities (id, agent_id, action, detail) VALUES (?, ?, 'task_queue_promoted', ?)").run(
+          genId(), task.assignee, `Task "${nextQueued.title}" promoted from queue — ${agentName} is now free`
+        );
+      }
     }
 
     return NextResponse.json({ success: true, task });

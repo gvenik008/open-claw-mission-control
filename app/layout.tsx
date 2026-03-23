@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import CommandPalette from "@/components/CommandPalette";
 
 export const metadata: Metadata = {
   title: "Mission Control — OpenClaw",
@@ -15,6 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="antialiased min-h-screen bg-[#0a0a0a] text-[#f5f5f5]">
+        <CommandPalette />
         <div className="flex h-screen overflow-hidden">
           <Sidebar />
           <main className="flex-1 overflow-auto p-6 bg-[#0a0a0a]">

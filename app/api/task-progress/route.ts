@@ -13,8 +13,9 @@ interface TaskProgress {
   timeoutSeconds: number;
   elapsedSeconds: number;
   progressPercent: number;
-  status: "running" | "near_complete" | "overtime";
+  status: "running" | "near_complete" | "overtime" | "queued";
   estimatedRemaining: string;
+  queuePosition: number | null;
 }
 
 export async function GET() {
@@ -31,19 +32,22 @@ export async function GET() {
     const now = Date.now();
     
     const progress: TaskProgress[] = tasks.map((t) => {
+      const isQueued = t.queue_position != null;
       const startedAt = t.started_at ? new Date(t.started_at.replace(" ", "T") + "Z").getTime() : now;
       const timeoutMs = (t.timeout_seconds || 600) * 1000;
-      const elapsed = now - startedAt;
+      const elapsed = isQueued ? 0 : (now - startedAt);
       const elapsedSeconds = Math.floor(elapsed / 1000);
-      const progressPercent = Math.min(Math.round((elapsed / timeoutMs) * 100), 100);
+      const progressPercent = isQueued ? 0 : Math.min(Math.round((elapsed / timeoutMs) * 100), 100);
       
-      let status: "running" | "near_complete" | "overtime" = "running";
-      if (progressPercent >= 100) status = "overtime";
+      let status: "running" | "near_complete" | "overtime" | "queued" = "running";
+      if (isQueued) status = "queued";
+      else if (progressPercent >= 100) status = "overtime";
       else if (progressPercent >= 80) status = "near_complete";
 
-      const remaining = Math.max(0, (t.timeout_seconds || 600) - elapsedSeconds);
+      const remaining = isQueued ? (t.timeout_seconds || 600) : Math.max(0, (t.timeout_seconds || 600) - elapsedSeconds);
       let estimatedRemaining = "";
-      if (remaining > 60) estimatedRemaining = `${Math.floor(remaining / 60)}m ${remaining % 60}s`;
+      if (isQueued) estimatedRemaining = `Queue #${t.queue_position}`;
+      else if (remaining > 60) estimatedRemaining = `${Math.floor(remaining / 60)}m ${remaining % 60}s`;
       else estimatedRemaining = `${remaining}s`;
 
       return {
@@ -58,6 +62,7 @@ export async function GET() {
         progressPercent,
         status,
         estimatedRemaining,
+        queuePosition: t.queue_position || null,
       };
     });
 
