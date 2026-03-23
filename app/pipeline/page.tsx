@@ -112,12 +112,12 @@ export default function PipelinePage() {
     return acc;
   }, {} as Record<string, Task[]>);
 
-  const totalTasks = tasks.length;
-  const doneTasks = tasks.filter((t) => t.status === "done").length;
+  const totalTasks = filteredTasks.length;
+  const doneTasks = filteredTasks.filter((t) => t.status === "done").length;
   const completionRate = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
-  const activeTasks = tasks.filter((t) => t.status === "in_progress").length;
+  const activeTasks = filteredTasks.filter((t) => t.status === "in_progress").length;
 
-  const activeAgentIds = new Set(tasks.filter((t) => t.status === "in_progress").map((t) => t.assignee).filter(Boolean));
+  const activeAgentIds = new Set(filteredTasks.filter((t) => t.status === "in_progress").map((t) => t.assignee).filter(Boolean));
 
   return (
     <div className="p-6 min-h-screen bg-[#0a0a0a]">

@@ -168,7 +168,7 @@ export default function FactoryPage() {
     try {
       const res = await fetch("/api/deploy-agent");
       const data = await res.json();
-      setAgents(data.agents || []);
+      setAgents(Array.isArray(data) ? data : data.agents || []);
     } catch {}
     setLoading(false);
   }, []);
@@ -223,6 +223,7 @@ export default function FactoryPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          agentId: formData.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""),
           name: formData.name,
           role: formData.role,
           division: formData.division,
