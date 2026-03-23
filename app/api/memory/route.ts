@@ -1,31 +1,88 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readdirSync, readFileSync, existsSync, statSync } from "fs";
-import { join } from "path";
+import { join, resolve, normalize } from "path";
 import { db } from "@/lib/db";
 
-const WORKSPACE = (process.env.HOME || "") + "/.openclaw/workspace";
+const HOME = process.env.HOME || "";
+const WORKSPACE = join(HOME, ".openclaw", "workspace");
+const OPENCLAW_ROOT = join(HOME, ".openclaw");
+
+// Allowed file extensions
+const ALLOWED_EXT = new Set([".md", ".json", ".yaml", ".yml", ".txt", ".toml"]);
+
+// Validate and resolve a path to prevent traversal attacks
+function safePath(requestedPath: string): string | null {
+  // Block null bytes
+  if (requestedPath.includes("\0")) return null;
+
+  // Decode any URL encoding
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(requestedPath);
+  } catch {
+    return null;
+  }
+
+  // Block null bytes after decode
+  if (decoded.includes("\0")) return null;
+
+  let fullPath: string;
+
+  if (decoded.startsWith("../workspace-")) {
+    // Agent workspace files — resolve under .openclaw/
+    const relative = decoded.replace(/^\.\.\//, "");
+    fullPath = resolve(OPENCLAW_ROOT, relative);
+  } else {
+    // Main workspace files
+    fullPath = resolve(WORKSPACE, decoded);
+  }
+
+  // Normalize and verify the resolved path stays within allowed directories
+  const normalized = normalize(fullPath);
+
+  // Must be under ~/.openclaw/workspace or ~/.openclaw/workspace-*
+  const isUnderMainWorkspace = normalized.startsWith(WORKSPACE + "/") || normalized === WORKSPACE;
+  const isUnderAgentWorkspace = normalized.startsWith(OPENCLAW_ROOT + "/workspace-");
+
+  if (!isUnderMainWorkspace && !isUnderAgentWorkspace) {
+    return null; // Path traversal attempt
+  }
+
+  // Check file extension
+  const ext = normalized.slice(normalized.lastIndexOf(".")).toLowerCase();
+  if (!ALLOWED_EXT.has(ext)) {
+    return null; // Disallowed file type
+  }
+
+  return normalized;
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const path = searchParams.get("path");
 
   if (path) {
-    // Sanitize path to prevent directory traversal
-    const safePath = path.replace(/\.\.\//g, "").replace(/^\//, "");
-    let fullPath: string;
-    if (path.startsWith("../workspace-")) {
-      // Agent workspace files — allow these specifically
-      const homePath = process.env.HOME || "";
-      fullPath = join(homePath + "/.openclaw", path.replace("../", ""));
-    } else {
-      fullPath = join(WORKSPACE, safePath);
+    const resolved = safePath(path);
+    if (!resolved) {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    if (!existsSync(fullPath)) {
+    if (!existsSync(resolved)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    const content = readFileSync(fullPath, "utf8");
-    const stat = statSync(fullPath);
+
+    // Ensure it's a file, not a directory
+    const stat = statSync(resolved);
+    if (!stat.isFile()) {
+      return NextResponse.json({ error: "Not a file" }, { status: 400 });
+    }
+
+    // Limit file size to 1MB
+    if (stat.size > 1024 * 1024) {
+      return NextResponse.json({ error: "File too large" }, { status: 413 });
+    }
+
+    const content = readFileSync(resolved, "utf8");
     return NextResponse.json({ path, content, size: stat.size, modified: stat.mtime });
   }
 
@@ -63,7 +120,10 @@ export async function GET(req: NextRequest) {
   } catch {}
 
   for (const agent of agents) {
-    const wsDir = (process.env.HOME || "") + `/.openclaw/workspace-${agent.agent_id}`;
+    // Sanitize agent_id — only allow alphanumeric and hyphens
+    if (!/^[a-zA-Z0-9-]+$/.test(agent.agent_id)) continue;
+
+    const wsDir = join(HOME, `.openclaw/workspace-${agent.agent_id}`);
     if (!existsSync(wsDir)) continue;
     for (const f of ["SOUL.md", "AGENTS.md"]) {
       const fp = join(wsDir, f);
