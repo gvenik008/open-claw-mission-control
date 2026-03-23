@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw, Brain, FileText, BookOpen, ChevronRight, Database, Clock, HardDrive } from "lucide-react";
+import { RefreshCw, Brain, FileText, BookOpen, ChevronRight, Database, Clock, HardDrive, Edit2, Save, X, Plus, Loader2 } from "lucide-react";
 
 interface MemoryFile {
   path: string;
@@ -28,6 +28,12 @@ interface FileContent {
   content: string;
   size: number;
   modified: string;
+}
+
+interface Agent {
+  agent_id: string;
+  name: string;
+  status: string;
 }
 
 const TYPE_CONFIG: Record<string, { label: string; color: string }> = {
@@ -106,25 +112,44 @@ function renderMarkdown(content: string): React.ReactNode[] {
 export default function MemoryPage() {
   const [files, setFiles] = useState<MemoryFile[]>([]);
   const [dbMemories, setDbMemories] = useState<DBMemory[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedFile, setSelectedFile] = useState<MemoryFile | null>(null);
   const [fileContent, setFileContent] = useState<FileContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [contentLoading, setContentLoading] = useState(false);
   const [search, setSearch] = useState("");
 
+  // Edit mode state
+  const [editMode, setEditMode] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [savingFile, setSavingFile] = useState(false);
+
+  // Add Note modal state
+  const [showAddNote, setShowAddNote] = useState(false);
+  const [noteAgent, setNoteAgent] = useState("");
+  const [noteContent, setNoteContent] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/memory?include=lessons");
-      const data = await res.json();
+      const [memRes, agentsRes] = await Promise.all([
+        fetch("/api/memory?include=lessons"),
+        fetch("/api/deploy-agent"),
+      ]);
+      const data = await memRes.json();
+      const agentsData = await agentsRes.json();
       setFiles(data.files || []);
       setDbMemories(data.dbMemories || []);
+      setAgents(Array.isArray(agentsData) ? agentsData : []);
     } catch {}
     setLoading(false);
   }, []);
 
   const loadFile = useCallback(async (file: MemoryFile) => {
     setSelectedFile(file);
+    setEditMode(false);
+    setEditContent("");
     setContentLoading(true);
     try {
       const res = await fetch(`/api/memory?path=${encodeURIComponent(file.path)}`);
@@ -137,6 +162,61 @@ export default function MemoryPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  function enterEditMode() {
+    if (!fileContent) return;
+    setEditContent(fileContent.content);
+    setEditMode(true);
+  }
+
+  function cancelEdit() {
+    setEditMode(false);
+    setEditContent("");
+  }
+
+  async function saveFile() {
+    if (!selectedFile) return;
+    setSavingFile(true);
+    try {
+      const res = await fetch("/api/memory/write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: selectedFile.path, content: editContent }),
+      });
+      if (res.ok) {
+        setFileContent((prev) => prev ? { ...prev, content: editContent } : prev);
+        setEditMode(false);
+        setEditContent("");
+        await load();
+      }
+    } catch {}
+    setSavingFile(false);
+  }
+
+  async function saveNote() {
+    if (!noteContent.trim()) return;
+    setSavingNote(true);
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const agentLabel = noteAgent
+        ? (agents.find((a) => a.agent_id === noteAgent)?.name || noteAgent)
+        : "Note";
+      const header = `\n## ${agentLabel} — ${today}\n`;
+      const fullNote = header + noteContent;
+
+      const path = `memory/${today}.md`;
+      await fetch("/api/memory/write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, content: fullNote, append: true }),
+      });
+      setShowAddNote(false);
+      setNoteContent("");
+      setNoteAgent("");
+      await load();
+    } catch {}
+    setSavingNote(false);
+  }
 
   const filteredFiles = files.filter(
     (f) =>
@@ -159,9 +239,18 @@ export default function MemoryPage() {
         <div className="p-4 border-b border-[#222222]">
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Memory</h1>
-            <button onClick={load} className="p-1.5 hover:bg-[#1a1a1a] rounded transition-colors">
-              <RefreshCw className={`w-3.5 h-3.5 text-[#555555] ${loading ? "animate-spin" : ""}`} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowAddNote(true)}
+                className="p-1.5 hover:bg-[#1a1a1a] rounded transition-colors text-[#555555] hover:text-[#888888]"
+                title="Add Note"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={load} className="p-1.5 hover:bg-[#1a1a1a] rounded transition-colors">
+                <RefreshCw className={`w-3.5 h-3.5 text-[#555555] ${loading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
           </div>
           <input
             type="text"
@@ -233,18 +322,73 @@ export default function MemoryPage() {
                   </span>
                 </div>
               </div>
-              <button
-                onClick={() => { setSelectedFile(null); setFileContent(null); }}
-                className="text-[12px] text-[#555555] hover:text-[#f5f5f5] transition-colors"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                {!editMode ? (
+                  <>
+                    <button
+                      onClick={enterEditMode}
+                      className="flex items-center gap-1.5 text-xs text-[#555555] hover:text-[#888888] transition-colors px-2 py-1.5 hover:bg-[#1a1a1a] rounded-md"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => { setSelectedFile(null); setFileContent(null); setEditMode(false); }}
+                      className="text-[12px] text-[#555555] hover:text-[#f5f5f5] transition-colors px-2 py-1.5 hover:bg-[#1a1a1a] rounded-md"
+                    >
+                      Close
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={cancelEdit}
+                      className="text-xs text-[#555555] hover:text-[#888888] transition-colors px-2 py-1.5 hover:bg-[#1a1a1a] rounded-md"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={saveFile}
+                      disabled={savingFile}
+                      className="flex items-center gap-1.5 bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors font-medium disabled:opacity-50"
+                    >
+                      {savingFile ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                      Save
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto px-8 py-6">
               {contentLoading ? (
                 <div className="flex items-center gap-2 text-[#555555]">
                   <RefreshCw className="w-4 h-4 animate-spin" />
                   <span className="text-[13px]">Loading...</span>
+                </div>
+              ) : editMode ? (
+                <div className="max-w-3xl">
+                  <textarea
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    className="w-full h-[60vh] bg-[#0a0a0a] border border-[#222222] rounded-md px-4 py-3 text-[13px] text-[#f5f5f5] font-mono focus:outline-none focus:border-[#5e6ad2] resize-none transition-colors"
+                    spellCheck={false}
+                  />
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button
+                      onClick={cancelEdit}
+                      className="bg-[#222222] hover:bg-[#2a2a2a] text-[#ccc] text-xs rounded-md px-3 py-1.5 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={saveFile}
+                      disabled={savingFile}
+                      className="flex items-center gap-1.5 bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors font-medium disabled:opacity-50"
+                    >
+                      {savingFile ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                      Save Changes
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="max-w-3xl">{renderMarkdown(fileContent.content)}</div>
@@ -292,6 +436,70 @@ export default function MemoryPage() {
           </div>
         )}
       </div>
+
+      {/* Add Note Modal */}
+      {showAddNote && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAddNote(false); }}
+        >
+          <div className="bg-[#111111] border border-[#222222] rounded-md w-full max-w-md mx-4 p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-[#f5f5f5]">Add Note</h2>
+              <button onClick={() => setShowAddNote(false)} className="text-[#555555] hover:text-[#888888]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1">Agent (optional)</label>
+                <select
+                  value={noteAgent}
+                  onChange={(e) => setNoteAgent(e.target.value)}
+                  className="w-full bg-[#0a0a0a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] focus:outline-none focus:border-[#5e6ad2]"
+                >
+                  <option value="">General Note</option>
+                  {agents.map((a) => (
+                    <option key={a.agent_id} value={a.agent_id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1">Note *</label>
+                <textarea
+                  autoFocus
+                  value={noteContent}
+                  onChange={(e) => setNoteContent(e.target.value)}
+                  placeholder="Write your note here..."
+                  rows={5}
+                  className="w-full bg-[#0a0a0a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] placeholder:text-[#555555] focus:outline-none focus:border-[#5e6ad2] resize-none"
+                />
+                <p className="text-[10px] text-[#444444] mt-1">
+                  Will be appended to memory/{new Date().toISOString().split("T")[0]}.md
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setShowAddNote(false)}
+                className="bg-[#222222] hover:bg-[#2a2a2a] text-[#ccc] text-xs rounded-md px-3 py-1.5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveNote}
+                disabled={savingNote || !noteContent.trim()}
+                className="flex items-center gap-1.5 bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors font-medium disabled:opacity-50"
+              >
+                {savingNote && <Loader2 className="w-3 h-3 animate-spin" />}
+                Save Note
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

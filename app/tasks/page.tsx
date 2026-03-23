@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { Plus, X, Loader2, RefreshCw } from "lucide-react";
+import { Plus, X, Loader2, RefreshCw, Trash2, Save, ChevronDown } from "lucide-react";
 import clsx from "clsx";
 
 type Priority = "urgent" | "high" | "medium" | "low";
@@ -15,6 +15,7 @@ interface Task {
   priority: Priority;
   status: Status;
   tags: string[];
+  result?: string;
   created_by: string;
   due_date: string | null;
   completed_at: string | null;
@@ -44,6 +45,7 @@ const COLUMNS: { key: Status; label: string }[] = [
 ];
 
 const PRIORITIES: Priority[] = ["urgent", "high", "medium", "low"];
+const STATUSES: Status[] = ["pending", "in_progress", "review", "done", "cancelled"];
 
 const PRIORITY_COLORS: Record<Priority, string> = {
   urgent: "bg-red-500/10 text-red-400",
@@ -63,6 +65,12 @@ function formatDate(str: string) {
   if (!str) return "";
   const d = new Date(str.replace(" ", "T"));
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatDateFull(str: string) {
+  if (!str) return "";
+  const d = new Date(str.replace(" ", "T"));
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function timeAgo(str: string) {
@@ -91,6 +99,14 @@ export default function TasksPage() {
     assignee: "",
     priority: "medium" as Priority,
   });
+
+  // Task detail modal state
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [editForm, setEditForm] = useState<Partial<Task>>({});
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   const dragOverCol = useRef<Status | null>(null);
 
   const loadData = useCallback(async () => {
@@ -115,15 +131,85 @@ export default function TasksPage() {
 
   useEffect(() => {
     loadData();
-    // Auto-refresh every 30s
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  // Escape key to dismiss detail modal
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (selectedTask) {
+          setSelectedTask(null);
+          setEditForm({});
+          setConfirmDelete(false);
+        } else if (showModal) {
+          setShowModal(false);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectedTask, showModal]);
 
   function agentName(agentId: string | null): string {
     if (!agentId) return "Unassigned";
     const agent = agents.find((a) => a.agent_id === agentId);
     return agent?.name || agentId;
+  }
+
+  function openTaskDetail(task: Task) {
+    setSelectedTask(task);
+    setEditForm({
+      title: task.title,
+      description: task.description,
+      status: task.status,
+      priority: task.priority,
+      assignee: task.assignee,
+    });
+    setConfirmDelete(false);
+  }
+
+  function closeTaskDetail() {
+    setSelectedTask(null);
+    setEditForm({});
+    setConfirmDelete(false);
+  }
+
+  async function handleSaveTask() {
+    if (!selectedTask) return;
+    setSaving(true);
+    try {
+      await fetch("/api/tasks", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: selectedTask.id, ...editForm }),
+      });
+      await loadData();
+      // Update selected task with new data
+      const updated = tasks.find((t) => t.id === selectedTask.id);
+      if (updated) setSelectedTask({ ...updated, ...editForm } as Task);
+    } catch {}
+    setSaving(false);
+  }
+
+  async function handleDeleteTask() {
+    if (!selectedTask) return;
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setDeleting(true);
+    try {
+      await fetch("/api/tasks", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: selectedTask.id }),
+      });
+      closeTaskDetail();
+      await loadData();
+    } catch {}
+    setDeleting(false);
   }
 
   async function handleCreate() {
@@ -242,8 +328,9 @@ export default function TasksPage() {
                     key={task.id}
                     draggable
                     onDragStart={() => onDragStart(task.id)}
+                    onClick={() => openTaskDetail(task)}
                     className={clsx(
-                      "bg-[#111111] border border-[#222222] rounded-md px-3 py-2.5 cursor-grab active:cursor-grabbing hover:bg-[#1a1a1a] transition-colors duration-150",
+                      "bg-[#111111] border border-[#222222] rounded-md px-3 py-2.5 cursor-pointer hover:bg-[#1a1a1a] hover:border-[#333333] transition-colors duration-150",
                       dragging === task.id && "opacity-50"
                     )}
                   >
@@ -411,6 +498,168 @@ export default function TasksPage() {
                 {creating && <Loader2 className="w-3 h-3 animate-spin" />}
                 Create Task
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Task Detail Modal */}
+      {selectedTask && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+          onClick={(e) => { if (e.target === e.currentTarget) closeTaskDetail(); }}
+        >
+          <div className="bg-[#111111] border border-[#222222] rounded-md w-full max-w-lg max-h-[80vh] overflow-y-auto mx-4">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#222222] sticky top-0 bg-[#111111] z-10">
+              <div className="flex items-center gap-2">
+                <span className={clsx("text-[10px] px-1.5 py-0.5 rounded-sm font-medium", PRIORITY_COLORS[editForm.priority as Priority || selectedTask.priority])}>
+                  {PRIORITY_LABELS[editForm.priority as Priority || selectedTask.priority]}
+                </span>
+                <span className="text-[10px] text-[#555555]">#{selectedTask.id.slice(0, 8)}</span>
+              </div>
+              <button onClick={closeTaskDetail} className="text-[#555555] hover:text-[#888888] transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-5 py-4 space-y-4">
+              {/* Title */}
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1.5">Title</label>
+                <input
+                  value={editForm.title ?? ""}
+                  onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                  className="w-full bg-[#0a0a0a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] placeholder:text-[#555555] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                />
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1.5">Description</label>
+                <textarea
+                  value={editForm.description ?? ""}
+                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  rows={3}
+                  placeholder="No description"
+                  className="w-full bg-[#0a0a0a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] placeholder:text-[#555555] focus:outline-none focus:border-[#5e6ad2] resize-none transition-colors"
+                />
+              </div>
+
+              {/* Status + Priority row */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1.5">Status</label>
+                  <select
+                    value={editForm.status ?? selectedTask.status}
+                    onChange={(e) => setEditForm({ ...editForm, status: e.target.value as Status })}
+                    className="w-full bg-[#0a0a0a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                  >
+                    {STATUSES.map((s) => (
+                      <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1.5">Priority</label>
+                  <select
+                    value={editForm.priority ?? selectedTask.priority}
+                    onChange={(e) => setEditForm({ ...editForm, priority: e.target.value as Priority })}
+                    className="w-full bg-[#0a0a0a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                  >
+                    {PRIORITIES.map((p) => (
+                      <option key={p} value={p}>{PRIORITY_LABELS[p]} — {p}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Assignee */}
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1.5">Assignee</label>
+                <select
+                  value={editForm.assignee ?? selectedTask.assignee ?? ""}
+                  onChange={(e) => setEditForm({ ...editForm, assignee: e.target.value || null })}
+                  className="w-full bg-[#0a0a0a] border border-[#222222] rounded-md px-3 py-2 text-[13px] text-[#f5f5f5] focus:outline-none focus:border-[#5e6ad2] transition-colors"
+                >
+                  <option value="">Unassigned</option>
+                  {agents.map((a) => (
+                    <option key={a.agent_id} value={a.agent_id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Tags */}
+              {selectedTask.tags && selectedTask.tags.length > 0 && (
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1.5">Tags</label>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {selectedTask.tags.map((tag) => (
+                      <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full bg-[#5e6ad2]/10 text-[#5e6ad2] border border-[#5e6ad2]/20">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Result box (if done) */}
+              {(editForm.status === "done" || selectedTask.status === "done") && selectedTask.result && (
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-[#555555] font-medium block mb-1.5">Result</label>
+                  <div className="bg-[#0a0a0a] border border-emerald-500/20 rounded-md px-4 py-3">
+                    <p className="text-[12px] text-emerald-400/80 leading-relaxed">{selectedTask.result}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Meta dates */}
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-[#444444] font-medium mb-1">Created</p>
+                  <p className="text-[11px] text-[#555555]">{formatDateFull(selectedTask.created_at)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-[#444444] font-medium mb-1">Updated</p>
+                  <p className="text-[11px] text-[#555555]">{formatDateFull(selectedTask.updated_at)}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer actions */}
+            <div className="px-5 py-4 border-t border-[#222222] flex items-center justify-between sticky bottom-0 bg-[#111111]">
+              <button
+                onClick={handleDeleteTask}
+                disabled={deleting}
+                className={clsx(
+                  "flex items-center gap-1.5 text-xs rounded-md px-3 py-1.5 transition-colors",
+                  confirmDelete
+                    ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                    : "text-[#555555] hover:text-red-400 hover:bg-red-500/10"
+                )}
+              >
+                {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                {confirmDelete ? "Confirm Delete" : "Delete"}
+              </button>
+              <div className="flex items-center gap-2">
+                {confirmDelete && (
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="text-xs text-[#555555] hover:text-[#888888] px-2 py-1.5"
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button
+                  onClick={handleSaveTask}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 bg-[#5e6ad2] hover:bg-[#6c78e0] text-white text-xs rounded-md px-3 py-1.5 transition-colors font-medium disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  Save
+                </button>
+              </div>
             </div>
           </div>
         </div>
