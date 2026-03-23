@@ -57,6 +57,30 @@ function agentInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+function agentEmoji(a: Agent): string {
+  const id = a.agent_id.toLowerCase();
+  const role = (a.role || "").toLowerCase();
+  const div = (a.division || "").toLowerCase();
+  // Specific agents first
+  if (id === "main") return "🧠";
+  if (id === "qa-lead" || role.includes("qa lead")) return "🗺️";
+  if (id === "qa-functional" || role.includes("functional")) return "🔍";
+  if (id === "qa-security" || role.includes("security") || div.includes("security")) return "🛡️";
+  if (id === "qa-general" || role.includes("general qa") || role.includes("exploratory")) return "🚀";
+  if (id === "product-manager" || role.includes("product")) return "💡";
+  // Division-based fallbacks
+  if (div.includes("qa") || role.includes("test")) return "🐞";
+  if (div.includes("development") || role.includes("developer") || role.includes("engineer")) return "⚙️";
+  if (role.includes("frontend") || role.includes("ui")) return "🎨";
+  if (role.includes("backend") || role.includes("api")) return "🔧";
+  if (div.includes("devops") || role.includes("devops") || role.includes("infra")) return "🏗️";
+  if (div.includes("research") || role.includes("research") || role.includes("analyst")) return "📊";
+  if (div.includes("design") || role.includes("design") || role.includes("ux")) return "✨";
+  if (role.includes("data") || role.includes("database")) return "📈";
+  if (role.includes("project") || role.includes("manager")) return "📋";
+  return "🤖";
+}
+
 function modelShort(m: string) {
   const s = m.replace("anthropic/", "").replace("claude-", "");
   if (s.includes("opus")) return "Opus 4";
@@ -156,6 +180,7 @@ function AgentListView({
           const color = agentColor(agent);
           const gradient = agentAvatarGradient(agent);
           const initials = agentInitials(agent.name);
+          const emoji = agentEmoji(agent);
           const at = agentTasks(agent.agent_id);
           const activeTasks = at.filter((t) => t.status === "in_progress").length;
           const completedTasks = at.filter((t) => t.status === "done").length;
@@ -175,7 +200,7 @@ function AgentListView({
                 {/* Gradient avatar */}
                 <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-lg"
                   style={{ background: gradient }}>
-                  <span className="text-white font-bold text-[15px] leading-none">{initials}</span>
+                  <span className="text-[24px] leading-none drop-shadow-md">{emoji}</span>
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="text-[14px] font-semibold text-[#f5f5f5] truncate">{agent.name}</h3>
@@ -290,7 +315,7 @@ function AgentDetailView({
             {/* Large gradient avatar */}
             <div className="w-20 h-20 rounded-2xl flex items-center justify-center shrink-0 shadow-xl"
               style={{ background: agentAvatarGradient(agent) }}>
-              <span className="text-white font-bold text-2xl leading-none">{agentInitials(agent.name)}</span>
+              <span className="text-[40px] leading-none drop-shadow-lg">{agentEmoji(agent)}</span>
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 mb-1 flex-wrap">
