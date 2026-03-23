@@ -61,10 +61,16 @@ const SKILL_KEYWORDS: Record<string, { skillIds: string[]; toolIds: string[] }> 
   "analyze": { skillIds: ["data-analysis"], toolIds: ["shell", "file_system"] },
   "report": { skillIds: ["report-generation", "status-reporting"], toolIds: ["file_system"] },
 
-  // Design
-  "ux": { skillIds: ["ux-audit", "user-flow-analysis"], toolIds: ["browser", "file_system"] },
-  "design": { skillIds: ["design-system-analysis", "ux-audit"], toolIds: ["browser", "file_system"] },
-  "user flow": { skillIds: ["user-flow-analysis"], toolIds: ["browser"] },
+  // Design & Product
+  "ux": { skillIds: ["user-experience-analysis", "user-journey-mapping", "usability-heuristics"], toolIds: ["browser", "file_system"] },
+  "design": { skillIds: ["design-system-analysis", "user-experience-analysis"], toolIds: ["browser", "file_system"] },
+  "user flow": { skillIds: ["user-journey-mapping"], toolIds: ["browser"] },
+  "product": { skillIds: ["product-strategy", "user-experience-analysis", "feature-prioritization"], toolIds: ["browser", "web_fetch", "file_system"] },
+  "feature": { skillIds: ["feature-prioritization", "product-strategy"], toolIds: ["browser", "file_system"] },
+  "conversion": { skillIds: ["conversion-optimization", "user-journey-mapping"], toolIds: ["browser", "web_fetch"] },
+  "monetization": { skillIds: ["monetization-strategy"], toolIds: ["browser", "web_fetch"] },
+  "competitive": { skillIds: ["competitive-analysis", "market-research"], toolIds: ["web_search", "web_fetch", "browser"] },
+  "improvement": { skillIds: ["product-strategy", "feature-prioritization"], toolIds: ["browser", "file_system"] },
 
   // Project Management
   "sprint": { skillIds: ["sprint-planning"], toolIds: ["file_system"] },
@@ -76,6 +82,12 @@ const SKILL_KEYWORDS: Record<string, { skillIds: string[]; toolIds: string[] }> 
   "audit": { skillIds: ["code-security-audit", "compliance-checking"], toolIds: ["file_system", "git"] },
   "secret": { skillIds: ["secret-detection"], toolIds: ["shell", "file_system", "git"] },
   "compliance": { skillIds: ["compliance-checking"], toolIds: ["file_system", "web_search"] },
+  "owasp": { skillIds: ["security-testing", "vulnerability-assessment", "threat-modeling"], toolIds: ["browser", "shell", "web_fetch"] },
+  "injection": { skillIds: ["security-testing", "input-fuzzing"], toolIds: ["browser", "shell"] },
+  "auth": { skillIds: ["auth-bypass-testing", "session-management-testing"], toolIds: ["browser", "shell"] },
+  "cors": { skillIds: ["header-security-audit", "api-security-testing"], toolIds: ["shell", "web_fetch"] },
+  "header": { skillIds: ["header-security-audit"], toolIds: ["shell", "web_fetch"] },
+  "privacy": { skillIds: ["data-exposure-detection"], toolIds: ["browser", "shell"] },
 
   // Web
   "browse": { skillIds: [], toolIds: ["browser"] },
@@ -201,6 +213,34 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ─── Find best matching agent ──────────────────────────────────────────
+    let recommendedAgent: { agent_id: string; name: string; score: number; matchedSkills: string[] } | null = null;
+
+    if (!agentId) {
+      const allAgents = db.prepare("SELECT * FROM agents WHERE status = 'active' AND agent_id != 'main'").all() as any[];
+      let bestScore = 0;
+
+      for (const agent of allAgents) {
+        const agentSkills = new Set<string>(JSON.parse(agent.skills || "[]").filter(Boolean));
+        const agentTools = new Set<string>(JSON.parse(agent.tools || "[]").filter(Boolean));
+
+        // Score = matched skills × 2 + matched tools × 1
+        const matchedSkills = [...neededSkillIds].filter((s) => agentSkills.has(s));
+        const matchedTools = [...neededToolIds].filter((t) => agentTools.has(t));
+        const score = matchedSkills.length * 2 + matchedTools.length;
+
+        if (score > bestScore) {
+          bestScore = score;
+          recommendedAgent = {
+            agent_id: agent.agent_id,
+            name: agent.name,
+            score,
+            matchedSkills,
+          };
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       neededSkills: [...neededSkillIds],
@@ -209,6 +249,7 @@ export async function POST(req: NextRequest) {
       missingTools,
       created: { skills: createdSkills, tools: createdTools },
       agentUpdated,
+      recommendedAgent,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
