@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import clsx from "clsx";
-import { Plus, X, Loader2, CheckCircle2, Clock, AlertCircle, RefreshCw } from "lucide-react";
+import { Plus, CheckCircle2, Clock, AlertCircle, RefreshCw } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,6 +51,15 @@ function getColor(id: string) { return ROBOT_COLORS[id] || DEFAULT_COLOR; }
 const PRIORITY_COLORS: Record<string, string> = {
   urgent: "text-red-400", high: "text-orange-400", medium: "text-yellow-400", low: "text-[#888888]"
 };
+
+// ─── Default position helper (module-level so all scopes can access) ──────────
+
+function defaultPosition(index: number): { x: number; y: number } {
+  return {
+    x: 120 + (index % 3) * 230,
+    y: 120 + Math.floor(index / 3) * 270,
+  };
+}
 
 // ─── SVG Components ───────────────────────────────────────────────────────────
 
@@ -104,71 +113,7 @@ function Desk({ color, working }: { color: { body: string; eye: string }; workin
   );
 }
 
-function Plant() {
-  return (
-    <svg width="40" height="50" viewBox="0 0 40 50" fill="none">
-      <rect x="13" y="35" width="14" height="12" rx="3" fill="#92400e" opacity="0.5" />
-      <rect x="12" y="33" width="16" height="4" rx="2" fill="#92400e" opacity="0.6" />
-      <circle cx="20" cy="26" r="10" fill="#22c55e" opacity="0.35" />
-      <circle cx="16" cy="22" r="7" fill="#22c55e" opacity="0.3" />
-      <circle cx="24" cy="22" r="7" fill="#22c55e" opacity="0.3" />
-      <line x1="20" y1="33" x2="20" y2="26" stroke="#166534" strokeWidth="2" />
-    </svg>
-  );
-}
-
-// ─── Agent Desk ───────────────────────────────────────────────────────────────
-
-function AgentDesk({
-  agent,
-  currentTask,
-  lastActivity,
-  selected,
-  onClick,
-}: {
-  agent: Agent;
-  currentTask: Task | null;
-  lastActivity: string;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const color = getColor(agent.agent_id);
-  const working = !!currentTask;
-
-  return (
-    <button onClick={onClick} className={clsx("relative flex flex-col items-center transition-all duration-300 group", selected ? "scale-105 z-10" : "hover:scale-105 hover:z-10")}>
-      {/* Task/activity bubble */}
-      <div className={clsx(
-        "absolute -top-3 left-1/2 -translate-x-1/2 px-2.5 py-1.5 rounded-lg text-[10px] whitespace-nowrap transition-all duration-300 z-20 max-w-[180px] truncate",
-        "bg-[#1a1a1a] border",
-        working ? "border-[#5e6ad2]/40 text-[#f5f5f5] font-medium opacity-100" : "border-[#222222] text-[#888888]",
-        !selected && !working && "opacity-0 group-hover:opacity-100"
-      )} style={selected ? { borderColor: `${color.body}60`, opacity: 1 } : {}}>
-        {working ? (
-          <span className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#5e6ad2] animate-pulse" />
-            {currentTask.title.slice(0, 30)}
-          </span>
-        ) : (
-          lastActivity || "Idle — ready for tasks"
-        )}
-        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-[#1a1a1a] border-r border-b" style={{ borderColor: working ? "#5e6ad240" : "#222222" }} />
-      </div>
-
-      <div className="relative mb-[-12px] z-10">
-        <Robot color={color} />
-        <div className={clsx("absolute -bottom-0 right-1 w-3 h-3 rounded-full border-2 border-[#0a0a0a]", working ? "bg-[#5e6ad2] animate-pulse" : agent.status === "active" ? "bg-emerald-500" : "bg-[#555555]")} />
-      </div>
-
-      <Desk color={color} working={working} />
-
-      <span className="text-[12px] font-medium mt-1 transition-colors" style={{ color: selected ? color.body : "#f5f5f5" }}>{agent.name}</span>
-      <span className="text-[9px] text-[#555555]">{working ? "Working" : "Idle"}</span>
-    </button>
-  );
-}
-
-// ─── Agent Detail Panel ───────────────────────────────────────────────────────
+// ─── Agent Panel ──────────────────────────────────────────────────────────────
 
 function AgentPanel({
   agent,
@@ -196,7 +141,11 @@ function AgentPanel({
   const [newTaskTitle, setNewTaskTitle] = useState("");
 
   return (
-    <div className="bg-[#111111] border rounded-lg p-4 w-72 shadow-xl space-y-3 max-h-[80vh] overflow-y-auto" style={{ borderColor: `${color.body}40` }}>
+    <div
+      className="bg-[#111111] border rounded-lg p-4 w-72 shadow-xl space-y-3 max-h-[80vh] overflow-y-auto"
+      style={{ borderColor: `${color.body}40` }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -276,25 +225,150 @@ function AgentPanel({
               placeholder="Task title..."
               value={newTaskTitle}
               onChange={(e) => setNewTaskTitle(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && newTaskTitle.trim()) { onAssign(newTaskTitle, agent.agent_id); setNewTaskTitle(""); setShowAssign(false); } }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newTaskTitle.trim()) {
+                  onAssign(newTaskTitle, agent.agent_id);
+                  setNewTaskTitle("");
+                  setShowAssign(false);
+                }
+              }}
               autoFocus
             />
             <div className="flex gap-1.5">
-              <button onClick={() => { if (newTaskTitle.trim()) { onAssign(newTaskTitle, agent.agent_id); setNewTaskTitle(""); setShowAssign(false); } }}
-                className="flex-1 flex items-center justify-center gap-1 py-1 rounded-md text-[11px] bg-[#5e6ad2] hover:bg-[#6c78e0] text-white transition-all">
+              <button
+                onClick={() => {
+                  if (newTaskTitle.trim()) {
+                    onAssign(newTaskTitle, agent.agent_id);
+                    setNewTaskTitle("");
+                    setShowAssign(false);
+                  }
+                }}
+                className="flex-1 flex items-center justify-center gap-1 py-1 rounded-md text-[11px] bg-[#5e6ad2] hover:bg-[#6c78e0] text-white transition-all"
+              >
                 <Plus className="w-3 h-3" /> Assign
               </button>
-              <button onClick={() => setShowAssign(false)}
-                className="px-2 py-1 rounded-md text-[11px] text-[#555555] hover:text-[#888888] hover:bg-[#1a1a1a] transition-all">
+              <button
+                onClick={() => setShowAssign(false)}
+                className="px-2 py-1 rounded-md text-[11px] text-[#555555] hover:text-[#888888] hover:bg-[#1a1a1a] transition-all"
+              >
                 Cancel
               </button>
             </div>
           </div>
         ) : (
-          <button onClick={() => setShowAssign(true)}
-            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[11px] bg-[#1a1a1a] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] hover:border-[#333333] transition-all">
+          <button
+            onClick={() => setShowAssign(true)}
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[11px] bg-[#1a1a1a] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] hover:border-[#333333] transition-all"
+          >
             <Plus className="w-3 h-3" /> Assign Task
           </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Agent Canvas Node ────────────────────────────────────────────────────────
+
+function AgentNode({
+  agent,
+  currentTask,
+  taskCount,
+  selected,
+  dragging,
+}: {
+  agent: Agent;
+  currentTask: Task | null;
+  taskCount: number;
+  selected: boolean;
+  dragging: boolean;
+}) {
+  const color = getColor(agent.agent_id);
+  const working = !!currentTask;
+
+  return (
+    <div
+      className="relative inline-flex flex-col items-center select-none"
+      style={{
+        transform: dragging ? "scale(1.05)" : "scale(1)",
+        transition: dragging ? "none" : "transform 0.15s ease",
+        filter: dragging
+          ? `drop-shadow(0 8px 24px ${color.body}50)`
+          : selected
+          ? `drop-shadow(0 4px 12px ${color.body}40)`
+          : "none",
+      }}
+    >
+      {/* Working pulse ring */}
+      {working && (
+        <div
+          className="absolute rounded-2xl pointer-events-none animate-pulse"
+          style={{
+            inset: "-6px",
+            border: `2px solid ${color.body}50`,
+            backgroundColor: `${color.body}08`,
+          }}
+        />
+      )}
+
+      {/* Selected ring */}
+      {selected && !working && (
+        <div
+          className="absolute rounded-2xl pointer-events-none"
+          style={{
+            inset: "-6px",
+            border: `2px solid ${color.body}60`,
+          }}
+        />
+      )}
+
+      {/* Drag glow ring */}
+      {dragging && (
+        <div
+          className="absolute rounded-2xl pointer-events-none"
+          style={{
+            inset: "-8px",
+            border: `2px solid ${color.body}80`,
+            boxShadow: `0 0 20px ${color.body}40`,
+          }}
+        />
+      )}
+
+      {/* Task count badge */}
+      {taskCount > 0 && (
+        <div
+          className="absolute -top-2 -right-1 min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center z-20 pointer-events-none"
+          style={{ backgroundColor: "#5e6ad2" }}
+        >
+          <span className="text-[9px] text-white font-bold leading-none">{taskCount}</span>
+        </div>
+      )}
+
+      <div className="relative mb-[-12px] z-10">
+        <Robot color={color} />
+        <div
+          className={clsx(
+            "absolute bottom-0 right-1 w-3 h-3 rounded-full border-2 border-[#0a0a0a]",
+            working ? "bg-[#5e6ad2] animate-pulse" : "bg-emerald-500"
+          )}
+        />
+      </div>
+
+      <Desk color={color} working={working} />
+
+      <div className="mt-2 text-center pointer-events-none">
+        <p
+          className="text-[12px] font-medium leading-tight"
+          style={{ color: selected ? color.body : "#f5f5f5" }}
+        >
+          {agent.name}
+        </p>
+        {working && currentTask ? (
+          <p className="text-[9px] text-[#5e6ad2] max-w-[130px] truncate mt-0.5">
+            {currentTask.title}
+          </p>
+        ) : (
+          <p className="text-[9px] text-[#555555] mt-0.5">Idle</p>
         )}
       </div>
     </div>
@@ -304,12 +378,63 @@ function AgentPanel({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function OfficePage() {
+  // ── Data state ──────────────────────────────────────────────────────────────
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 
+  // ── Canvas state (state for rendering + refs for event handlers) ─────────────
+  const [pan, setPan] = useState({ x: 80, y: 60 });
+  const [zoom, setZoom] = useState(1);
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  // Refs (always current, safe to use inside event listeners)
+  const panRef = useRef({ x: 80, y: 60 });
+  const zoomRef = useRef(1);
+  const positionsRef = useRef<Record<string, { x: number; y: number }>>({});
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  // Interaction refs
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ mouseX: 0, mouseY: 0, panX: 0, panY: 0 });
+  const isDraggingRef = useRef<string | null>(null);
+  const dragStartRef = useRef({ mouseX: 0, mouseY: 0, nodeX: 0, nodeY: 0 });
+  const dragMovedRef = useRef(false);
+  const lastPinchDistRef = useRef(0);
+
+  // ── Sync helpers ─────────────────────────────────────────────────────────────
+  const updatePan = useCallback((newPan: { x: number; y: number }) => {
+    panRef.current = newPan;
+    setPan(newPan);
+  }, []);
+
+  const updateZoom = useCallback((newZoom: number) => {
+    zoomRef.current = newZoom;
+    setZoom(newZoom);
+  }, []);
+
+  const updatePositions = useCallback((pos: Record<string, { x: number; y: number }>) => {
+    positionsRef.current = pos;
+    setPositions(pos);
+    try { localStorage.setItem("office-robot-positions", JSON.stringify(pos)); } catch {}
+  }, []);
+
+  // ── Load saved positions ──────────────────────────────────────────────────────
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("office-robot-positions");
+      if (saved) {
+        const parsed = JSON.parse(saved) as Record<string, { x: number; y: number }>;
+        positionsRef.current = parsed;
+        setPositions(parsed);
+      }
+    } catch {}
+  }, []);
+
+  // ── Data fetching ─────────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
     try {
       const [agentsRes, tasksRes, actRes] = await Promise.all([
@@ -332,29 +457,308 @@ export default function OfficePage() {
     return () => clearInterval(interval);
   }, [loadData]);
 
-  const selected = agents.find((a) => a.agent_id === selectedAgent);
+  // ── Wheel zoom (non-passive) ──────────────────────────────────────────────────
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 0.9;
+      const newZoom = Math.min(3, Math.max(0.3, zoomRef.current * factor));
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const worldX = (mx - panRef.current.x) / zoomRef.current;
+      const worldY = (my - panRef.current.y) / zoomRef.current;
+      const newPan = {
+        x: mx - worldX * newZoom,
+        y: my - worldY * newZoom,
+      };
+      panRef.current = newPan;
+      zoomRef.current = newZoom;
+      setPan(newPan);
+      setZoom(newZoom);
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
 
-  // Get current task and last activity for each agent
+  // ── Mouse event handlers ──────────────────────────────────────────────────────
+  const handleViewportMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    // Don't pan if clicking on a robot card or the agent panel
+    if ((e.target as HTMLElement).closest("[data-robot]")) return;
+    if ((e.target as HTMLElement).closest("[data-panel]")) return;
+    isPanningRef.current = true;
+    panStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      panX: panRef.current.x,
+      panY: panRef.current.y,
+    };
+    e.preventDefault();
+  }, []);
+
+  const handleRobotMouseDown = useCallback(
+    (e: React.MouseEvent, agentId: string, index: number) => {
+      e.stopPropagation();
+      if (e.button !== 0) return;
+      const pos = positionsRef.current[agentId] ?? defaultPosition(index);
+      isDraggingRef.current = agentId;
+      dragMovedRef.current = false;
+      dragStartRef.current = {
+        mouseX: e.clientX,
+        mouseY: e.clientY,
+        nodeX: pos.x,
+        nodeY: pos.y,
+      };
+      setDraggingId(agentId);
+      e.preventDefault();
+    },
+    []
+  );
+
+  // Global mouse move / up
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isPanningRef.current) {
+        const dx = e.clientX - panStartRef.current.mouseX;
+        const dy = e.clientY - panStartRef.current.mouseY;
+        const newPan = {
+          x: panStartRef.current.panX + dx,
+          y: panStartRef.current.panY + dy,
+        };
+        panRef.current = newPan;
+        setPan({ ...newPan });
+      } else if (isDraggingRef.current) {
+        const id = isDraggingRef.current;
+        const dx = e.clientX - dragStartRef.current.mouseX;
+        const dy = e.clientY - dragStartRef.current.mouseY;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMovedRef.current = true;
+        const newPos = {
+          ...positionsRef.current,
+          [id]: {
+            x: dragStartRef.current.nodeX + dx / zoomRef.current,
+            y: dragStartRef.current.nodeY + dy / zoomRef.current,
+          },
+        };
+        positionsRef.current = newPos;
+        setPositions({ ...newPos });
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (isDraggingRef.current) {
+        const id = isDraggingRef.current;
+        if (!dragMovedRef.current) {
+          // Click (not drag) → toggle selection
+          setSelectedAgent((prev) => (prev === id ? null : id));
+        }
+        // Persist positions
+        try {
+          localStorage.setItem(
+            "office-robot-positions",
+            JSON.stringify(positionsRef.current)
+          );
+        } catch {}
+        isDraggingRef.current = null;
+        setDraggingId(null);
+      }
+      isPanningRef.current = false;
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  // ── Touch events ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const getPinchDist = (touches: TouchList): number => {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        lastPinchDistRef.current = getPinchDist(e.touches);
+        // Cancel any ongoing single-touch operation
+        isPanningRef.current = false;
+        isDraggingRef.current = null;
+        setDraggingId(null);
+      } else if (e.touches.length === 1) {
+        const t = e.touches[0];
+        const robotEl = (t.target as HTMLElement).closest("[data-robot]");
+        if (robotEl) {
+          const agentId = robotEl.getAttribute("data-robot")!;
+          const indexStr = robotEl.getAttribute("data-index") ?? "0";
+          const index = parseInt(indexStr, 10);
+          const pos =
+            positionsRef.current[agentId] ?? defaultPosition(index);
+          isDraggingRef.current = agentId;
+          dragMovedRef.current = false;
+          dragStartRef.current = {
+            mouseX: t.clientX,
+            mouseY: t.clientY,
+            nodeX: pos.x,
+            nodeY: pos.y,
+          };
+          setDraggingId(agentId);
+        } else {
+          isPanningRef.current = true;
+          panStartRef.current = {
+            mouseX: t.clientX,
+            mouseY: t.clientY,
+            panX: panRef.current.x,
+            panY: panRef.current.y,
+          };
+        }
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+      if (e.touches.length === 2) {
+        const dist = getPinchDist(e.touches);
+        const factor = dist / lastPinchDistRef.current;
+        lastPinchDistRef.current = dist;
+        const rect = el.getBoundingClientRect();
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+        const newZoom = Math.min(3, Math.max(0.3, zoomRef.current * factor));
+        const worldX = (cx - panRef.current.x) / zoomRef.current;
+        const worldY = (cy - panRef.current.y) / zoomRef.current;
+        const newPan = { x: cx - worldX * newZoom, y: cy - worldY * newZoom };
+        panRef.current = newPan;
+        zoomRef.current = newZoom;
+        setPan({ ...newPan });
+        setZoom(newZoom);
+      } else if (e.touches.length === 1) {
+        const t = e.touches[0];
+        if (isDraggingRef.current) {
+          const id = isDraggingRef.current;
+          const dx = t.clientX - dragStartRef.current.mouseX;
+          const dy = t.clientY - dragStartRef.current.mouseY;
+          if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMovedRef.current = true;
+          const newPos = {
+            ...positionsRef.current,
+            [id]: {
+              x: dragStartRef.current.nodeX + dx / zoomRef.current,
+              y: dragStartRef.current.nodeY + dy / zoomRef.current,
+            },
+          };
+          positionsRef.current = newPos;
+          setPositions({ ...newPos });
+        } else if (isPanningRef.current) {
+          const dx = t.clientX - panStartRef.current.mouseX;
+          const dy = t.clientY - panStartRef.current.mouseY;
+          const newPan = {
+            x: panStartRef.current.panX + dx,
+            y: panStartRef.current.panY + dy,
+          };
+          panRef.current = newPan;
+          setPan({ ...newPan });
+        }
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        if (isDraggingRef.current) {
+          const id = isDraggingRef.current;
+          if (!dragMovedRef.current) {
+            setSelectedAgent((prev) => (prev === id ? null : id));
+          }
+          try {
+            localStorage.setItem(
+              "office-robot-positions",
+              JSON.stringify(positionsRef.current)
+            );
+          } catch {}
+          isDraggingRef.current = null;
+          setDraggingId(null);
+        }
+        isPanningRef.current = false;
+      }
+    };
+
+    el.addEventListener("touchstart", handleTouchStart, { passive: false });
+    el.addEventListener("touchmove", handleTouchMove, { passive: false });
+    el.addEventListener("touchend", handleTouchEnd);
+    return () => {
+      el.removeEventListener("touchstart", handleTouchStart);
+      el.removeEventListener("touchmove", handleTouchMove);
+      el.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, []);
+
+  // ── Zoom controls ─────────────────────────────────────────────────────────────
+  const zoomTowards = useCallback(
+    (factor: number) => {
+      const el = viewportRef.current;
+      const newZoom = Math.min(3, Math.max(0.3, zoomRef.current * factor));
+      if (el) {
+        const cx = el.clientWidth / 2;
+        const cy = el.clientHeight / 2;
+        const worldX = (cx - panRef.current.x) / zoomRef.current;
+        const worldY = (cy - panRef.current.y) / zoomRef.current;
+        const newPan = { x: cx - worldX * newZoom, y: cy - worldY * newZoom };
+        updatePan(newPan);
+      }
+      updateZoom(newZoom);
+    },
+    [updatePan, updateZoom]
+  );
+
+  const fitAll = useCallback(() => {
+    if (agents.length === 0) return;
+    const el = viewportRef.current;
+    if (!el) return;
+    const CARD_W = 160;
+    const CARD_H = 210;
+    const PAD = 60;
+    const allPos = agents.map((a, i) => positionsRef.current[a.agent_id] ?? defaultPosition(i));
+    const minX = Math.min(...allPos.map((p) => p.x)) - CARD_W / 2 - PAD;
+    const minY = Math.min(...allPos.map((p) => p.y)) - CARD_H / 2 - PAD;
+    const maxX = Math.max(...allPos.map((p) => p.x)) + CARD_W / 2 + PAD;
+    const maxY = Math.max(...allPos.map((p) => p.y)) + CARD_H / 2 + PAD;
+    const worldW = maxX - minX;
+    const worldH = maxY - minY;
+    const viewW = el.clientWidth;
+    const viewH = el.clientHeight;
+    const newZoom = Math.min(3, Math.max(0.3, Math.min(viewW / worldW, viewH / worldH) * 0.92));
+    const newPan = {
+      x: (viewW - worldW * newZoom) / 2 - minX * newZoom,
+      y: (viewH - worldH * newZoom) / 2 - minY * newZoom,
+    };
+    updatePan(newPan);
+    updateZoom(newZoom);
+  }, [agents, updatePan, updateZoom]);
+
+  const resetView = useCallback(() => {
+    updatePan({ x: 80, y: 60 });
+    updateZoom(1);
+  }, [updatePan, updateZoom]);
+
+  // ── Data helpers ──────────────────────────────────────────────────────────────
   function agentCurrentTask(agentId: string): Task | null {
-    return tasks.find((t) => t.assignee === agentId && t.status === "in_progress") || null;
+    return tasks.find((t) => t.assignee === agentId && t.status === "in_progress") ?? null;
   }
 
-  function agentLastActivity(agentId: string): string {
-    const act = activities.find((a) => a.agent_id === agentId);
-    if (!act) return "";
-    return `${act.action.replace(/_/g, " ")}${act.detail ? ": " + act.detail.slice(0, 25) : ""}`;
+  function agentTaskCount(agentId: string): number {
+    return tasks.filter((t) => t.assignee === agentId && t.status !== "done").length;
   }
 
   function agentName(id: string): string {
-    return agents.find((a) => a.agent_id === id)?.name || id;
-  }
-
-  function timeAgo(str: string): string {
-    if (!str) return "";
-    const mins = Math.floor((Date.now() - new Date(str.replace(" ", "T")).getTime()) / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    return `${Math.floor(mins / 60)}h ago`;
+    return agents.find((a) => a.agent_id === id)?.name ?? id;
   }
 
   async function assignTask(title: string, agentId: string) {
@@ -366,32 +770,30 @@ export default function OfficePage() {
     loadData();
   }
 
-  // Stats
-  const totalTasks = tasks.length;
+  // ── Derived stats ─────────────────────────────────────────────────────────────
+  const selected = agents.find((a) => a.agent_id === selectedAgent);
+  const workingAgents = agents.filter((a) => agentCurrentTask(a.agent_id)).length;
   const activeTasks = tasks.filter((t) => t.status === "in_progress").length;
   const doneTasks = tasks.filter((t) => t.status === "done").length;
-  const workingAgents = agents.filter((a) => agentCurrentTask(a.agent_id)).length;
+  const totalTasks = tasks.length;
 
-  // Layout agents in rows
-  const rows: Agent[][] = [];
-  const perRow = 3;
-  for (let i = 0; i < agents.length; i += perRow) {
-    rows.push(agents.slice(i, i + perRow));
-  }
-
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
-    <div className="max-w-full mx-auto space-y-0">
+    <div className="flex flex-col" style={{ height: "calc(100vh - 7rem)" }}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <div>
           <h1 className="text-xl font-semibold text-[#f5f5f5] tracking-tight">Office</h1>
           <p className="text-sm text-[#555555] mt-0.5">
-            {workingAgents} working · {agents.length - workingAgents} idle · {activeTasks} active task{activeTasks !== 1 ? "s" : ""}
+            {workingAgents} working · {agents.length - workingAgents} idle · {activeTasks} active task
+            {activeTasks !== 1 ? "s" : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => { setLoading(true); loadData(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] bg-[#1a1a1a] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] transition-all">
+          <button
+            onClick={() => { setLoading(true); loadData(); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] bg-[#1a1a1a] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] transition-all"
+          >
             <RefreshCw className={clsx("w-3.5 h-3.5", loading && "animate-spin")} />
           </button>
           <div className="flex items-center gap-3 px-3 py-1.5 bg-[#111111] border border-[#222222] rounded-md">
@@ -411,65 +813,86 @@ export default function OfficePage() {
         </div>
       </div>
 
-      <div className="flex gap-4">
-        {/* Office Floor */}
-        <div className="flex-1 relative">
-          <div className="rounded-xl border border-[#1a1a1a] p-8 relative overflow-hidden"
-            style={{ background: "linear-gradient(135deg, #0c0c0c 0%, #0a0a0a 50%, #0c0c0c 100%)" }}>
-            <div className="absolute inset-0 opacity-[0.04]" style={{
-              backgroundImage: "linear-gradient(#ffffff 1px, transparent 1px), linear-gradient(90deg, #ffffff 1px, transparent 1px)",
-              backgroundSize: "40px 40px",
-            }} />
+      {/* Canvas Viewport */}
+      <div
+        ref={viewportRef}
+        className="flex-1 relative rounded-xl border border-[#1a1a1a] overflow-hidden min-h-0"
+        style={{
+          background: "#0a0a0a",
+          backgroundImage: "radial-gradient(circle, #222222 1px, transparent 1px)",
+          backgroundSize: "24px 24px",
+          backgroundPosition: `${((pan.x % 24) + 24) % 24}px ${((pan.y % 24) + 24) % 24}px`,
+          cursor: draggingId ? "grabbing" : "grab",
+          userSelect: "none",
+        }}
+        onMouseDown={handleViewportMouseDown}
+      >
+        {/* Canvas world */}
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            width: 0,
+            height: 0,
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: "0 0",
+          }}
+        >
+          {agents.map((agent, i) => {
+            const pos = positions[agent.agent_id] ?? defaultPosition(i);
+            const isDrag = draggingId === agent.agent_id;
+            const currentTask = agentCurrentTask(agent.agent_id);
+            const taskCount = agentTaskCount(agent.agent_id);
 
-            <div className="absolute top-6 left-6"><Plant /></div>
-            <div className="absolute bottom-6 right-6"><Plant /></div>
-
-            <div className="relative z-10 space-y-16 py-8">
-              {rows.map((row, rowIdx) => (
-                <div key={rowIdx} className="flex items-end justify-center gap-16">
-                  {row.map((agent) => (
-                    <AgentDesk
-                      key={agent.agent_id}
-                      agent={agent}
-                      currentTask={agentCurrentTask(agent.agent_id)}
-                      lastActivity={agentLastActivity(agent.agent_id)}
-                      selected={selectedAgent === agent.agent_id}
-                      onClick={() => setSelectedAgent(selectedAgent === agent.agent_id ? null : agent.agent_id)}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Bottom agent bar */}
-          <div className="mt-4 grid grid-cols-5 gap-2">
-            {agents.map((agent) => {
-              const color = getColor(agent.agent_id);
-              const task = agentCurrentTask(agent.agent_id);
-              const isSelected = selectedAgent === agent.agent_id;
-              return (
-                <button key={agent.agent_id}
-                  onClick={() => setSelectedAgent(isSelected ? null : agent.agent_id)}
-                  className={clsx("flex items-center gap-2 px-3 py-2 rounded-md border transition-all text-left",
-                    isSelected ? "bg-[#111111]" : "bg-[#0a0a0a] border-[#1a1a1a] hover:bg-[#111111] hover:border-[#222222]"
-                  )} style={isSelected ? { borderColor: color.body } : {}}>
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
-                    style={{ backgroundColor: `${color.body}20`, color: color.body }}>{agent.name[0]}</div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-medium text-[#f5f5f5] truncate">{agent.name}</p>
-                    <p className="text-[9px] text-[#555555] truncate">{task ? task.title.slice(0, 20) : "Idle"}</p>
-                  </div>
-                  <div className={clsx("w-1.5 h-1.5 rounded-full shrink-0", task ? "bg-[#5e6ad2] animate-pulse" : "bg-emerald-500")} />
-                </button>
-              );
-            })}
-          </div>
+            return (
+              <div
+                key={agent.agent_id}
+                data-robot={agent.agent_id}
+                data-index={i}
+                style={{
+                  position: "absolute",
+                  left: pos.x,
+                  top: pos.y,
+                  transform: "translate(-50%, -50%)",
+                  zIndex: isDrag ? 100 : selectedAgent === agent.agent_id ? 50 : 1,
+                  cursor: isDrag ? "grabbing" : "grab",
+                }}
+                onMouseDown={(e) => handleRobotMouseDown(e, agent.agent_id, i)}
+              >
+                <AgentNode
+                  agent={agent}
+                  currentTask={currentTask}
+                  taskCount={taskCount}
+                  selected={selectedAgent === agent.agent_id}
+                  dragging={isDrag}
+                />
+              </div>
+            );
+          })}
         </div>
 
-        {/* Right Panel: Activity Feed or Agent Detail */}
-        <div className="w-72 shrink-0 space-y-3">
-          {selected ? (
+        {/* Loading overlay */}
+        {loading && agents.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <p className="text-[#555555] text-[13px]">Loading agents…</p>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!loading && agents.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <p className="text-[#444444] text-[13px]">No active agents</p>
+          </div>
+        )}
+
+        {/* Agent detail panel (floating overlay) */}
+        {selected && (
+          <div
+            className="absolute top-4 right-4 z-50"
+            data-panel="true"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
             <AgentPanel
               agent={selected}
               tasks={tasks}
@@ -478,30 +901,94 @@ export default function OfficePage() {
               onClose={() => setSelectedAgent(null)}
               onAssign={assignTask}
             />
-          ) : (
-            <div className="bg-[#111111] border border-[#222222] rounded-md overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-[#222222]">
-                <span className="text-[13px] font-medium text-[#f5f5f5]">⚡ Activity</span>
-                <span className="text-[10px] text-[#555555]">real-time</span>
-              </div>
-              <div className="divide-y divide-[#1a1a1a] max-h-[500px] overflow-y-auto">
-                {activities.length === 0 && (
-                  <div className="px-4 py-8 text-center"><p className="text-[12px] text-[#555555]">No activity yet</p></div>
-                )}
-                {activities.slice(0, 15).map((item) => (
-                  <div key={item.id} className="px-4 py-3 hover:bg-[#1a1a1a] transition-colors">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: getColor(item.agent_id).body }} />
-                      <span className="text-[11px] font-medium text-[#f5f5f5]">{agentName(item.agent_id)}</span>
-                    </div>
-                    <p className="text-[10px] text-[#888888] ml-3.5">{item.action.replace(/_/g, " ")}{item.detail ? ` — ${item.detail.slice(0, 40)}` : ""}</p>
-                    <p className="text-[9px] text-[#444444] ml-3.5 mt-0.5">{timeAgo(item.created_at)}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          </div>
+        )}
+
+        {/* Zoom controls (bottom-right) */}
+        <div
+          className="absolute bottom-4 right-4 flex items-center gap-1 z-40"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => zoomTowards(1.2)}
+            className="w-8 h-8 flex items-center justify-center rounded-md bg-[#111111] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] hover:border-[#333333] hover:bg-[#1a1a1a] transition-all text-[16px] font-medium leading-none"
+            title="Zoom in"
+          >
+            +
+          </button>
+          <button
+            onClick={() => zoomTowards(1 / 1.2)}
+            className="w-8 h-8 flex items-center justify-center rounded-md bg-[#111111] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] hover:border-[#333333] hover:bg-[#1a1a1a] transition-all text-[16px] font-medium leading-none"
+            title="Zoom out"
+          >
+            −
+          </button>
+          <button
+            onClick={fitAll}
+            className="h-8 px-2.5 flex items-center justify-center rounded-md bg-[#111111] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] hover:border-[#333333] hover:bg-[#1a1a1a] transition-all text-[11px] gap-1"
+            title="Fit all agents"
+          >
+            ⊡ Fit
+          </button>
+          <button
+            onClick={resetView}
+            className="h-8 px-2.5 flex items-center justify-center rounded-md bg-[#111111] border border-[#222222] text-[#888888] hover:text-[#f5f5f5] hover:border-[#333333] hover:bg-[#1a1a1a] transition-all text-[11px] gap-1"
+            title="Reset view"
+          >
+            ↺ Reset
+          </button>
+          <div className="ml-1 px-2 h-8 flex items-center rounded-md bg-[#111111] border border-[#1a1a1a] text-[#555555] text-[10px] font-mono min-w-[44px] justify-center">
+            {Math.round(zoom * 100)}%
+          </div>
         </div>
+
+        {/* Hint when no agents yet */}
+        {!loading && agents.length > 0 && (
+          <div className="absolute bottom-4 left-4 text-[10px] text-[#333333] select-none pointer-events-none">
+            Drag to move robots · Scroll to zoom · Click robot to inspect
+          </div>
+        )}
+      </div>
+
+      {/* Bottom status bar */}
+      <div className="mt-3 flex flex-wrap gap-2 flex-shrink-0">
+        {agents.map((agent) => {
+          const color = getColor(agent.agent_id);
+          const task = agentCurrentTask(agent.agent_id);
+          const isSelected = selectedAgent === agent.agent_id;
+          return (
+            <button
+              key={agent.agent_id}
+              onClick={() => setSelectedAgent(isSelected ? null : agent.agent_id)}
+              className={clsx(
+                "flex items-center gap-2 px-3 py-2 rounded-md border transition-all text-left min-w-[140px]",
+                isSelected
+                  ? "bg-[#111111]"
+                  : "bg-[#0a0a0a] border-[#1a1a1a] hover:bg-[#111111] hover:border-[#222222]"
+              )}
+              style={isSelected ? { borderColor: color.body } : {}}
+            >
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                style={{ backgroundColor: `${color.body}20`, color: color.body }}
+              >
+                {agent.name[0]}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-medium text-[#f5f5f5] truncate">{agent.name}</p>
+                <p className="text-[9px] text-[#555555] truncate">
+                  {task ? task.title.slice(0, 20) : "Idle"}
+                </p>
+              </div>
+              <div
+                className={clsx(
+                  "w-1.5 h-1.5 rounded-full shrink-0",
+                  task ? "bg-[#5e6ad2] animate-pulse" : "bg-emerald-500"
+                )}
+              />
+            </button>
+          );
+        })}
       </div>
     </div>
   );
