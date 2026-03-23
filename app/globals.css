@@ -53,3 +53,21 @@ body {
     transition: all 150ms ease;
   }
 }
+
+@keyframes agent-card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.agent-card-animate {
+  animation: agent-card-in 0.35s ease forwards;
+}
+
+@keyframes border-pulse {
+  0%, 100% { border-color: rgba(94, 106, 210, 0.2); }
+  50%       { border-color: rgba(94, 106, 210, 0.55); }
+}
+
+.create-card-border {
+  animation: border-pulse 2.5s ease-in-out infinite;
+}

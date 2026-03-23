@@ -42,6 +42,21 @@ function AgentIcon({ agent, size = "md" }: { agent: Agent; size?: "sm" | "md" | 
   return <Bot className={s} />;
 }
 
+function agentAvatarGradient(a: Agent): string {
+  if (a.agent_id === "main") return "linear-gradient(135deg, #5e6ad2, #8b5cf6)";
+  if (a.division?.includes("Security")) return "linear-gradient(135deg, #ef4444, #f97316)";
+  if (a.division?.includes("QA")) return "linear-gradient(135deg, #f59e0b, #ef4444)";
+  if (a.division?.includes("Development")) return "linear-gradient(135deg, #10b981, #06b6d4)";
+  if (a.division?.includes("DevOps")) return "linear-gradient(135deg, #06b6d4, #3b82f6)";
+  return "linear-gradient(135deg, #8b5cf6, #ec4899)";
+}
+
+function agentInitials(name: string): string {
+  const words = name.trim().split(/\s+/);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
 function modelShort(m: string) {
   const s = m.replace("anthropic/", "").replace("claude-", "");
   if (s.includes("opus")) return "Opus 4";
@@ -86,7 +101,7 @@ function AgentListView({
   const doneTasks = tasks.filter((t) => t.status === "done").length;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-8">
       {/* Header with stats */}
       <div className="flex items-start justify-between">
         <div>
@@ -104,15 +119,23 @@ function AgentListView({
         {[
           { label: "Total Agents", value: active.length, icon: Users, color: "#5e6ad2" },
           { label: "Total Tasks", value: totalTasks, icon: CheckCircle2, color: "#f59e0b" },
-          { label: "Completed", value: doneTasks, icon: Zap, color: "#10b981" },
+          { label: "Completed", value: doneTasks, icon: Zap, color: "#10b981", showProgress: true, total: totalTasks },
           { label: "Skills Used", value: new Set(active.flatMap((a) => a.skills || [])).size, icon: Sparkles, color: "#8b5cf6" },
-        ].map(({ label, value, icon: Icon, color }) => (
-          <div key={label} className="bg-[#111111] border border-[#222222] rounded-lg p-4">
-            <div className="flex items-center justify-between mb-2">
-              <Icon className="w-4 h-4" style={{ color }} />
-              <span className="text-xl font-bold text-[#f5f5f5]">{value}</span>
+        ].map(({ label, value, icon: Icon, color, showProgress, total }) => (
+          <div key={label} className="rounded-xl p-4 flex flex-col gap-2 border border-[#222222]"
+            style={{ background: `linear-gradient(135deg, #111111 60%, ${color}08)` }}>
+            <div className="flex items-center justify-between">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${color}14` }}>
+                <Icon className="w-3.5 h-3.5" style={{ color }} />
+              </div>
+              <span className="text-2xl font-bold text-[#f5f5f5]">{value}</span>
             </div>
-            <p className="text-[11px] text-[#888888]">{label}</p>
+            <p className="text-[11px] text-[#666666]">{label}</p>
+            {showProgress && total != null && total > 0 && (
+              <div className="h-0.5 rounded-full bg-[#1a1a1a] overflow-hidden">
+                <div className="h-full rounded-full transition-all" style={{ width: `${Math.round((value / total) * 100)}%`, backgroundColor: color }} />
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -129,40 +152,55 @@ function AgentListView({
 
       {/* Agent Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filtered.map((agent) => {
+        {filtered.map((agent, idx) => {
           const color = agentColor(agent);
+          const gradient = agentAvatarGradient(agent);
+          const initials = agentInitials(agent.name);
           const at = agentTasks(agent.agent_id);
           const activeTasks = at.filter((t) => t.status === "in_progress").length;
           const completedTasks = at.filter((t) => t.status === "done").length;
           const lastAct = agentLastAct(agent.agent_id);
+          const isWorking = activeTasks > 0;
 
           return (
             <button key={agent.agent_id} onClick={() => onSelect(agent)}
-              className="bg-[#111111] border border-[#222222] rounded-xl p-5 text-left hover:border-[#333333] hover:shadow-lg transition-all group relative overflow-hidden">
-              {/* Accent bar */}
-              <div className="absolute top-0 left-0 right-0 h-1 rounded-t-xl" style={{ backgroundColor: color }} />
+              className="agent-card-animate bg-[#111111] border border-[#222222] rounded-2xl p-6 text-left hover:border-[#2a2a2a] hover:shadow-[0_0_30px_rgba(94,106,210,0.08)] transition-all group relative overflow-hidden"
+              style={{ animationDelay: `${idx * 50}ms` }}>
 
-              {/* Header */}
-              <div className="flex items-start gap-3 mb-4 mt-1">
-                <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-                  style={{ backgroundColor: `${color}15`, color }}>
-                  <AgentIcon agent={agent} />
+              {/* Left-side gradient accent bar */}
+              <div className="absolute left-0 top-3 bottom-3 w-1 rounded-full" style={{ background: gradient }} />
+
+              {/* Header row: avatar + name + status pill */}
+              <div className="flex items-start gap-3 mb-4 pl-2">
+                {/* Gradient avatar */}
+                <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-lg"
+                  style={{ background: gradient }}>
+                  <span className="text-white font-bold text-[15px] leading-none">{initials}</span>
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="text-[14px] font-semibold text-[#f5f5f5] truncate">{agent.name}</h3>
-                  <p className="text-[11px] text-[#888888] line-clamp-1">{agent.role.split("—")[0].trim()}</p>
+                  <p className="text-[11px] text-[#666666] line-clamp-1 mt-0.5">{agent.role.split("—")[0].trim()}</p>
                 </div>
-                <div className={clsx("w-2 h-2 rounded-full mt-1.5 shrink-0", activeTasks > 0 ? "bg-[#5e6ad2] animate-pulse" : "bg-emerald-500")} />
+                {/* Status pill */}
+                <div className={clsx(
+                  "flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-medium shrink-0",
+                  isWorking
+                    ? "bg-emerald-500/10 text-emerald-400"
+                    : "bg-[#1a1a1a] text-[#555555]"
+                )}>
+                  <span className={clsx("w-1.5 h-1.5 rounded-full", isWorking ? "bg-emerald-400 animate-pulse" : "bg-[#444444]")} />
+                  {isWorking ? "Working" : "Idle"}
+                </div>
               </div>
 
               {/* Badges */}
-              <div className="flex items-center gap-2 flex-wrap mb-3">
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: `${color}12`, color }}>{modelShort(agent.model)}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1a1a1a] text-[#666666]">{agent.division === "none" ? "Core" : agent.division}</span>
+              <div className="flex items-center gap-2 flex-wrap mb-3 pl-2">
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: `${color}14`, color }}>{modelShort(agent.model)}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#1a1a1a] text-[#555555]">{agent.division === "none" ? "Core" : agent.division}</span>
               </div>
 
               {/* Task mini-stats */}
-              <div className="flex items-center gap-4 mb-3">
+              <div className="flex items-center gap-4 mb-3 pl-2">
                 {activeTasks > 0 && (
                   <div className="flex items-center gap-1">
                     <Clock className="w-3 h-3 text-[#5e6ad2]" />
@@ -175,23 +213,26 @@ function AgentListView({
                     <span className="text-[10px] text-emerald-400">{completedTasks} done</span>
                   </div>
                 )}
-                {at.length === 0 && <span className="text-[10px] text-[#555555]">No tasks assigned</span>}
+                {at.length === 0 && <span className="text-[10px] text-[#444444]">No tasks yet</span>}
               </div>
 
-              {/* Skills */}
+              {/* Skills as colored pills */}
               {agent.skills?.length > 0 && (
-                <div className="flex gap-1 flex-wrap mb-3">
-                  {agent.skills.slice(0, 3).map((s) => (
-                    <span key={s} className="text-[9px] px-1.5 py-0.5 rounded-md bg-[#1a1a1a] text-[#888888]">{s}</span>
+                <div className="flex gap-1 flex-wrap mb-3 pl-2">
+                  {agent.skills.slice(0, 4).map((s) => (
+                    <span key={s} className="text-[9px] px-2 py-0.5 rounded-full font-medium"
+                      style={{ backgroundColor: `${color}12`, color: `${color}cc` }}>{s}</span>
                   ))}
-                  {agent.skills.length > 3 && <span className="text-[9px] text-[#555555]">+{agent.skills.length - 3}</span>}
+                  {agent.skills.length > 4 && (
+                    <span className="text-[9px] px-2 py-0.5 rounded-full bg-[#1a1a1a] text-[#444444]">+{agent.skills.length - 4}</span>
+                  )}
                 </div>
               )}
 
               {/* Last activity */}
               {lastAct && (
-                <div className="pt-3 border-t border-[#1a1a1a]">
-                  <p className="text-[10px] text-[#555555] truncate">
+                <div className="pt-3 border-t border-[#1a1a1a] pl-2">
+                  <p className="text-[10px] text-[#444444] truncate">
                     <Activity className="w-3 h-3 inline mr-1" />
                     {lastAct.action.replace(/_/g, " ")} · {timeAgo(lastAct.created_at)}
                   </p>
@@ -203,11 +244,14 @@ function AgentListView({
 
         {/* New Agent Card */}
         <button onClick={onCreate}
-          className="border-2 border-dashed border-[#222222] rounded-xl p-5 flex flex-col items-center justify-center gap-3 hover:border-[#5e6ad2]/50 hover:bg-[#5e6ad2]/5 transition-all min-h-[200px]">
-          <div className="w-11 h-11 rounded-xl bg-[#5e6ad2]/10 flex items-center justify-center">
-            <Plus className="w-5 h-5 text-[#5e6ad2]" />
+          className="create-card-border border-2 border-dashed border-[#222222] rounded-2xl p-6 flex flex-col items-center justify-center gap-3 hover:bg-[#5e6ad2]/5 transition-all min-h-[200px] group">
+          <div className="w-14 h-14 rounded-2xl bg-[#5e6ad2]/10 flex items-center justify-center group-hover:bg-[#5e6ad2]/15 transition-colors">
+            <Plus className="w-6 h-6 text-[#5e6ad2]" />
           </div>
-          <span className="text-[13px] font-medium text-[#555555]">Create New Agent</span>
+          <div className="text-center">
+            <p className="text-[13px] font-semibold text-[#888888] group-hover:text-[#aaaaaa] transition-colors">Create New Agent</p>
+            <p className="text-[11px] text-[#444444] mt-0.5">Add a specialist to your team</p>
+          </div>
         </button>
       </div>
     </div>
@@ -232,32 +276,40 @@ function AgentDetailView({
   const [showRetireConfirm, setShowRetireConfirm] = useState(false);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-5">
+    <div className="max-w-4xl mx-auto space-y-8">
       {/* Back */}
       <button onClick={onBack} className="flex items-center gap-1.5 text-[13px] text-[#888888] hover:text-[#f5f5f5] transition-colors">
         <ArrowLeft className="w-4 h-4" /> All Agents
       </button>
 
       {/* Hero Card */}
-      <div className="bg-[#111111] border border-[#222222] rounded-xl overflow-hidden">
-        <div className="h-2" style={{ backgroundColor: color }} />
+      <div className="border border-[#222222] rounded-2xl overflow-hidden"
+        style={{ background: `linear-gradient(135deg, #111111 70%, ${color}05)` }}>
         <div className="p-6">
           <div className="flex items-start gap-5">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center shrink-0"
-              style={{ backgroundColor: `${color}15`, color }}>
-              <AgentIcon agent={agent} size="lg" />
+            {/* Large gradient avatar */}
+            <div className="w-20 h-20 rounded-2xl flex items-center justify-center shrink-0 shadow-xl"
+              style={{ background: agentAvatarGradient(agent) }}>
+              <span className="text-white font-bold text-2xl leading-none">{agentInitials(agent.name)}</span>
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-1">
-                <h2 className="text-xl font-bold text-[#f5f5f5]">{agent.name}</h2>
-                <div className={clsx("w-2.5 h-2.5 rounded-full", agent.status === "active" ? "bg-emerald-500" : "bg-red-500")} />
+              <div className="flex items-center gap-3 mb-1 flex-wrap">
+                <h2 className="text-2xl font-bold text-[#f5f5f5]">{agent.name}</h2>
+                {/* Status pill */}
+                <div className={clsx(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium",
+                  agent.status === "active" ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"
+                )}>
+                  <span className={clsx("w-1.5 h-1.5 rounded-full", agent.status === "active" ? "bg-emerald-400" : "bg-red-400")} />
+                  {agent.status === "active" ? "Active" : agent.status}
+                </div>
               </div>
-              <p className="text-[13px] text-[#888888] leading-relaxed mb-3">{agent.role}</p>
+              <p className="text-[13px] text-[#777777] leading-relaxed mb-3">{agent.role}</p>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] px-2.5 py-1 rounded-full font-medium" style={{ backgroundColor: `${color}12`, color }}>{modelShort(agent.model)}</span>
+                <span className="text-[11px] px-2.5 py-1 rounded-full font-medium" style={{ backgroundColor: `${color}14`, color }}>{modelShort(agent.model)}</span>
                 <span className="text-[11px] px-2.5 py-1 rounded-full bg-[#1a1a1a] text-[#888888]">{agent.division === "none" ? "Core" : agent.division}</span>
                 <span className="text-[11px] px-2.5 py-1 rounded-full bg-[#1a1a1a] text-[#555555] font-mono">{agent.agent_id}</span>
-                <span className="text-[11px] text-[#555555]">Created {agent.created}</span>
+                <span className="text-[11px] text-[#444444]">Created {agent.created}</span>
               </div>
             </div>
             {!isMain && (
