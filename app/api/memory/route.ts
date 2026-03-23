@@ -3,6 +3,8 @@ import { readdirSync, readFileSync, existsSync, statSync } from "fs";
 import { join, resolve, normalize } from "path";
 import { db } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 const HOME = process.env.HOME || "";
 const WORKSPACE = join(HOME, ".openclaw", "workspace");
 const OPENCLAW_ROOT = join(HOME, ".openclaw");
@@ -163,10 +165,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Only include DB memories if explicitly requested
+  const includeParam = new URL(req.url).searchParams.get("include");
   let dbMemories: any[] = [];
-  try {
-    dbMemories = db.prepare("SELECT * FROM memories ORDER BY created_at DESC LIMIT 50").all();
-  } catch {}
+  if (includeParam === "lessons") {
+    try {
+      // Strip sensitive fields — only return content, type, agent_id, created_at
+      const raw = db.prepare("SELECT agent_id, type, content, created_at FROM memories ORDER BY created_at DESC LIMIT 50").all();
+      dbMemories = raw;
+    } catch {}
+  }
 
   return NextResponse.json({ files, dbMemories });
 }

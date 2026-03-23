@@ -115,7 +115,7 @@ export default function MemoryPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/memory");
+      const res = await fetch("/api/memory?include=lessons");
       const data = await res.json();
       setFiles(data.files || []);
       setDbMemories(data.dbMemories || []);
