@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { masterDb, genId } from "@/lib/master-db";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import Database from "better-sqlite3";
 
@@ -136,6 +136,24 @@ export async function POST(req: NextRequest) {
       const { execSync } = require("child_process");
       const uid = execSync("id -u").toString().trim();
       execSync(`launchctl bootstrap gui/${uid} "${mcPlistPath}" 2>/dev/null || true`);
+    } catch {}
+
+    // ─── Update instances.json for deploy.sh ───────────────────────────
+    try {
+      const instancesFile = join(process.cwd(), "data", "instances.json");
+      let instances: any[] = [];
+      try { instances = JSON.parse(readFileSync(instancesFile, "utf8")); } catch {}
+      if (!instances.find((i: any) => i.telegramId === telegramId)) {
+        instances.push({
+          id: cleanUsername,
+          name,
+          port: mcPort,
+          dbPath,
+          telegramId,
+          createdAt: new Date().toISOString(),
+        });
+        writeFileSync(instancesFile, JSON.stringify(instances, null, 2));
+      }
     } catch {}
 
     // ─── Register in master DB ────────────────────────────────────────
