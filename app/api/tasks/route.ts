@@ -3,10 +3,10 @@ import { db, genId } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-// Ensure telegram_id column exists (migration)
-try {
-  db.exec("ALTER TABLE tasks ADD COLUMN telegram_id TEXT DEFAULT NULL");
-} catch { /* column already exists */ }
+// Migrations
+try { db.exec("ALTER TABLE tasks ADD COLUMN telegram_id TEXT DEFAULT NULL"); } catch {}
+try { db.exec("ALTER TABLE tasks ADD COLUMN started_at TEXT DEFAULT NULL"); } catch {}
+try { db.exec("ALTER TABLE tasks ADD COLUMN timeout_seconds INTEGER DEFAULT 600"); } catch {}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -63,7 +63,17 @@ export async function PATCH(req: NextRequest) {
     if (updates.description !== undefined) { fields.push("description = @description"); values.description = updates.description; }
     if (updates.status) {
       fields.push("status = @status"); values.status = updates.status;
+      if (updates.status === "in_progress") {
+        fields.push("started_at = datetime('now')");
+        // Set timeout based on task type
+        const desc = (updates.description || "").toLowerCase();
+        const existingTask = db.prepare("SELECT description FROM tasks WHERE id = ?").get(id) as any;
+        const fullDesc = (existingTask?.description || "").toLowerCase() + " " + desc;
+        const timeout = fullDesc.match(/browser|test|ui|qa|security|pentest/) ? 900 : 600;
+        fields.push("timeout_seconds = @timeout_seconds"); values.timeout_seconds = timeout;
+      }
       if (updates.status === "done") fields.push("completed_at = datetime('now')");
+      if (updates.status === "pending") { fields.push("started_at = NULL"); }
     }
     if (updates.priority) { fields.push("priority = @priority"); values.priority = updates.priority; }
     if (updates.assignee !== undefined) { fields.push("assignee = @assignee"); values.assignee = updates.assignee || null; }

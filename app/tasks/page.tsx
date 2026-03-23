@@ -37,6 +37,20 @@ interface ActivityItem {
   created_at: string;
 }
 
+interface TaskProgress {
+  id: string;
+  title: string;
+  assignee: string;
+  agentName: string;
+  priority: string;
+  startedAt: string;
+  timeoutSeconds: number;
+  elapsedSeconds: number;
+  progressPercent: number;
+  status: "running" | "near_complete" | "overtime";
+  estimatedRemaining: string;
+}
+
 const COLUMNS: { key: Status; label: string }[] = [
   { key: "pending", label: "Backlog" },
   { key: "in_progress", label: "In Progress" },
@@ -100,6 +114,10 @@ export default function TasksPage() {
     priority: "medium" as Priority,
   });
 
+  // Progress tracking for in_progress tasks
+  const [progress, setProgress] = useState<Record<string, TaskProgress>>({});
+  const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // Task detail modal state
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [editForm, setEditForm] = useState<Partial<Task>>({});
@@ -134,6 +152,39 @@ export default function TasksPage() {
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  // Poll /api/task-progress every 5s, but only when there are in_progress tasks
+  useEffect(() => {
+    const hasInProgress = tasks.some((t) => t.status === "in_progress");
+
+    if (hasInProgress) {
+      const fetchProgress = async () => {
+        try {
+          const res = await fetch("/api/task-progress");
+          if (!res.ok) return;
+          const data = await res.json();
+          const map: Record<string, TaskProgress> = {};
+          if (Array.isArray(data.tasks)) {
+            for (const tp of data.tasks) map[tp.id] = tp;
+          }
+          setProgress(map);
+        } catch {
+          // silently fail
+        }
+      };
+      fetchProgress();
+      progressIntervalRef.current = setInterval(fetchProgress, 5000);
+    } else {
+      setProgress({});
+    }
+
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    };
+  }, [tasks]);
 
   // Escape key to dismiss detail modal
   useEffect(() => {
@@ -323,49 +374,79 @@ export default function TasksPage() {
                 </div>
 
                 {/* Cards */}
-                {colTasks.map((task) => (
-                  <div
-                    key={task.id}
-                    draggable
-                    onDragStart={() => onDragStart(task.id)}
-                    onClick={() => openTaskDetail(task)}
-                    className={clsx(
-                      "bg-[#111111] border border-[#222222] rounded-md px-3 py-2.5 cursor-pointer hover:bg-[#1a1a1a] hover:border-[#333333] transition-colors duration-150",
-                      dragging === task.id && "opacity-50"
-                    )}
-                  >
-                    <p className="text-[13px] text-[#f5f5f5] leading-snug mb-2">{task.title}</p>
-                    {task.description && (
-                      <p className="text-[11px] text-[#555555] leading-snug mb-2 line-clamp-2">{task.description}</p>
-                    )}
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span
-                        className={clsx(
-                          "text-[10px] px-1.5 py-0.5 rounded-sm font-medium",
-                          PRIORITY_COLORS[task.priority]
-                        )}
-                      >
-                        {PRIORITY_LABELS[task.priority]}
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888] truncate max-w-[100px]">
-                        {agentName(task.assignee)}
-                      </span>
-                    </div>
-                    {task.tags && task.tags.length > 0 && (
-                      <div className="flex gap-1 mt-1.5 flex-wrap">
-                        {task.tags.slice(0, 3).map((tag) => (
-                          <span
-                            key={tag}
-                            className="text-[9px] px-1 py-0.5 rounded-sm bg-[#5e6ad2]/10 text-[#5e6ad2]"
-                          >
-                            {tag}
-                          </span>
-                        ))}
+                {colTasks.map((task) => {
+                  const taskProgress = key === "in_progress" ? progress[task.id] : undefined;
+                  const progressColor = taskProgress
+                    ? taskProgress.status === "overtime"
+                      ? "#ef4444"
+                      : taskProgress.status === "near_complete"
+                      ? "#f59e0b"
+                      : "#5e6ad2"
+                    : "#5e6ad2";
+
+                  return (
+                    <div
+                      key={task.id}
+                      draggable
+                      onDragStart={() => onDragStart(task.id)}
+                      onClick={() => openTaskDetail(task)}
+                      className={clsx(
+                        "bg-[#111111] rounded-md px-3 py-2.5 cursor-pointer hover:bg-[#1a1a1a] transition-colors duration-150",
+                        dragging === task.id && "opacity-50",
+                        taskProgress
+                          ? "border border-[#5e6ad2]/40 shadow-[0_0_8px_rgba(94,106,210,0.08)]"
+                          : "border border-[#222222] hover:border-[#333333]"
+                      )}
+                    >
+                      <p className="text-[13px] text-[#f5f5f5] leading-snug mb-2">{task.title}</p>
+                      {task.description && (
+                        <p className="text-[11px] text-[#555555] leading-snug mb-2 line-clamp-2">{task.description}</p>
+                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className={clsx(
+                            "text-[10px] px-1.5 py-0.5 rounded-sm font-medium",
+                            PRIORITY_COLORS[task.priority]
+                          )}
+                        >
+                          {PRIORITY_LABELS[task.priority]}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[#222222] text-[#888888] truncate max-w-[100px]">
+                          {agentName(task.assignee)}
+                        </span>
                       </div>
-                    )}
-                    <p className="text-[10px] text-[#444444] mt-1.5">{formatDate(task.created_at)}</p>
-                  </div>
-                ))}
+                      {task.tags && task.tags.length > 0 && (
+                        <div className="flex gap-1 mt-1.5 flex-wrap">
+                          {task.tags.slice(0, 3).map((tag) => (
+                            <span
+                              key={tag}
+                              className="text-[9px] px-1 py-0.5 rounded-sm bg-[#5e6ad2]/10 text-[#5e6ad2]"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[10px] text-[#444444] mt-1.5">{formatDate(task.created_at)}</p>
+
+                      {/* Progress bar — only shown for in_progress tasks with live data */}
+                      {taskProgress && (
+                        <div className="mt-2 pt-2 border-t border-[#1a1a1a]">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] text-[#555555]">{taskProgress.estimatedRemaining} left</span>
+                            <span className="text-[10px]" style={{ color: progressColor }}>{taskProgress.progressPercent}%</span>
+                          </div>
+                          <div className="h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all duration-1000 ease-linear"
+                              style={{ width: `${taskProgress.progressPercent}%`, backgroundColor: progressColor }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
 
                 {/* Drop zone placeholder */}
                 {colTasks.length === 0 && (

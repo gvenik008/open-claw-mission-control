@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import clsx from "clsx";
 import {
   Check, ChevronRight, ChevronLeft, Search, Plus, X, Loader2, CheckCircle2,
@@ -20,6 +20,12 @@ interface Agent {
 }
 interface Task { id: string; title: string; status: string; priority: string; assignee: string | null; }
 interface ActivityItem { id: string; agent_id: string; action: string; detail: string; created_at: string; }
+interface TaskProgressItem {
+  id: string; title: string; assignee: string; agentName: string; priority: string;
+  startedAt: string; timeoutSeconds: number; elapsedSeconds: number;
+  progressPercent: number; status: "running" | "near_complete" | "overtime";
+  estimatedRemaining: string;
+}
 
 type PageView = "list" | "detail" | "create" | "edit";
 
@@ -103,9 +109,10 @@ const toKebab = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim
 // ─── Agent List View ──────────────────────────────────────────────────────────
 
 function AgentListView({
-  agents, tasks, activities, onSelect, onCreate,
+  agents, tasks, activities, agentProgress, onSelect, onCreate,
 }: {
   agents: Agent[]; tasks: Task[]; activities: ActivityItem[];
+  agentProgress: Record<string, TaskProgressItem>;
   onSelect: (a: Agent) => void; onCreate: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -187,6 +194,9 @@ function AgentListView({
           const lastAct = agentLastAct(agent.agent_id);
           const isWorking = activeTasks > 0;
 
+          // Find live progress for this agent — pick highest priority / most recent task
+          const agentTask = agentProgress[agent.agent_id] ?? null;
+
           return (
             <button key={agent.agent_id} onClick={() => onSelect(agent)}
               className="agent-card-animate bg-[#111111] border border-[#222222] rounded-2xl p-6 text-left hover:border-[#2a2a2a] hover:shadow-[0_0_30px_rgba(94,106,210,0.08)] transition-all group relative overflow-hidden"
@@ -206,16 +216,23 @@ function AgentListView({
                   <h3 className="text-[14px] font-semibold text-[#f5f5f5] truncate">{agent.name}</h3>
                   <p className="text-[11px] text-[#666666] line-clamp-1 mt-0.5">{agent.role.split("—")[0].trim()}</p>
                 </div>
-                {/* Status pill */}
-                <div className={clsx(
-                  "flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-medium shrink-0",
-                  isWorking
-                    ? "bg-emerald-500/10 text-emerald-400"
-                    : "bg-[#1a1a1a] text-[#555555]"
-                )}>
-                  <span className={clsx("w-1.5 h-1.5 rounded-full", isWorking ? "bg-emerald-400 animate-pulse" : "bg-[#444444]")} />
-                  {isWorking ? "Working" : "Idle"}
-                </div>
+                {/* Status pill — replaced with live progress pill when working */}
+                {agentTask ? (
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-medium shrink-0 bg-[#5e6ad2]/10 text-[#5e6ad2]">
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#5e6ad2] animate-pulse" />
+                    Working {agentTask.progressPercent}%
+                  </div>
+                ) : (
+                  <div className={clsx(
+                    "flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-medium shrink-0",
+                    isWorking
+                      ? "bg-emerald-500/10 text-emerald-400"
+                      : "bg-[#1a1a1a] text-[#555555]"
+                  )}>
+                    <span className={clsx("w-1.5 h-1.5 rounded-full", isWorking ? "bg-emerald-400 animate-pulse" : "bg-[#444444]")} />
+                    {isWorking ? "Working" : "Idle"}
+                  </div>
+                )}
               </div>
 
               {/* Badges */}
@@ -254,11 +271,31 @@ function AgentListView({
                 </div>
               )}
 
+              {/* Live task progress — shown when agent has active progress data */}
+              {agentTask && (
+                <div className="mt-2 pt-2 border-t border-[#1a1a1a] pl-2">
+                  <p className="text-[10px] text-[#5e6ad2] truncate mb-1">⚡ {agentTask.title}</p>
+                  <div className="h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+                    <div className="h-full rounded-full bg-[#5e6ad2] transition-all duration-1000 ease-linear"
+                      style={{ width: `${agentTask.progressPercent}%` }} />
+                  </div>
+                  <span className="text-[9px] text-[#444444]">{agentTask.estimatedRemaining} remaining</span>
+                </div>
+              )}
+
               {/* Last activity */}
-              {lastAct && (
+              {lastAct && !agentTask && (
                 <div className="pt-3 border-t border-[#1a1a1a] pl-2">
                   <p className="text-[10px] text-[#444444] truncate">
                     <Activity className="w-3 h-3 inline mr-1" />
+                    {lastAct.action.replace(/_/g, " ")} · {timeAgo(lastAct.created_at)}
+                  </p>
+                </div>
+              )}
+              {lastAct && agentTask && (
+                <div className="pl-2 mt-1">
+                  <p className="text-[9px] text-[#333333] truncate">
+                    <Activity className="w-2.5 h-2.5 inline mr-1" />
                     {lastAct.action.replace(/_/g, " ")} · {timeAgo(lastAct.created_at)}
                   </p>
                 </div>
@@ -286,9 +323,10 @@ function AgentListView({
 // ─── Agent Detail View ────────────────────────────────────────────────────────
 
 function AgentDetailView({
-  agent, agents, tasks, activities, onBack, onEdit, onRetire,
+  agent, agents, tasks, activities, agentProgress, onBack, onEdit, onRetire,
 }: {
   agent: Agent; agents: Agent[]; tasks: Task[]; activities: ActivityItem[];
+  agentProgress: Record<string, TaskProgressItem>;
   onBack: () => void; onEdit: () => void; onRetire: () => void;
 }) {
   const color = agentColor(agent);
@@ -297,6 +335,7 @@ function AgentDetailView({
   const agentTasks = tasks.filter((t) => t.assignee === agent.agent_id);
   const agentActs = activities.filter((a) => a.agent_id === agent.agent_id).slice(0, 8);
   const isMain = agent.agent_id === "main";
+  const activeTask = agentProgress[agent.agent_id] ?? null;
 
   const [showRetireConfirm, setShowRetireConfirm] = useState(false);
 
@@ -336,6 +375,26 @@ function AgentDetailView({
                 <span className="text-[11px] px-2.5 py-1 rounded-full bg-[#1a1a1a] text-[#555555] font-mono">{agent.agent_id}</span>
                 <span className="text-[11px] text-[#444444]">Created {agent.created}</span>
               </div>
+
+              {/* Live task progress in hero card */}
+              {activeTask && (
+                <div className="mt-4 pt-4 border-t border-[#1a1a1a]">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[11px] text-[#5e6ad2] font-medium">⚡ {activeTask.title}</p>
+                    <span className="text-[11px] text-[#5e6ad2] font-semibold">{activeTask.progressPercent}%</span>
+                  </div>
+                  <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-1000 ease-linear"
+                      style={{
+                        width: `${activeTask.progressPercent}%`,
+                        backgroundColor: activeTask.status === "overtime" ? "#ef4444" : activeTask.status === "near_complete" ? "#f59e0b" : "#5e6ad2",
+                      }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-[#555555] mt-1">{activeTask.estimatedRemaining} remaining</p>
+                </div>
+              )}
             </div>
             {!isMain && (
               <div className="flex items-center gap-2 shrink-0">
@@ -373,17 +432,39 @@ function AgentDetailView({
               <p className="text-[12px] text-[#555555]">No tasks assigned</p>
             ) : (
               <div className="space-y-2">
-                {agentTasks.map((t) => (
-                  <div key={t.id} className="flex items-center justify-between bg-[#0a0a0a] rounded-lg px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      {t.status === "done" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> :
-                       t.status === "in_progress" ? <Clock className="w-3.5 h-3.5 text-[#5e6ad2]" /> :
-                       <AlertCircle className="w-3.5 h-3.5 text-yellow-400" />}
-                      <span className={clsx("text-[12px]", t.status === "done" ? "text-[#555555] line-through" : "text-[#f5f5f5]")}>{t.title}</span>
+                {agentTasks.map((t) => {
+                  const tp = t.status === "in_progress" ? agentProgress[agent.agent_id] : undefined;
+                  const tpColor = tp
+                    ? tp.status === "overtime" ? "#ef4444" : tp.status === "near_complete" ? "#f59e0b" : "#5e6ad2"
+                    : "#5e6ad2";
+                  return (
+                    <div key={t.id} className="bg-[#0a0a0a] rounded-lg px-3 py-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {t.status === "done" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> :
+                           t.status === "in_progress" ? <Clock className="w-3.5 h-3.5 text-[#5e6ad2]" /> :
+                           <AlertCircle className="w-3.5 h-3.5 text-yellow-400" />}
+                          <span className={clsx("text-[12px]", t.status === "done" ? "text-[#555555] line-through" : "text-[#f5f5f5]")}>{t.title}</span>
+                        </div>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#1a1a1a] text-[#888888]">{t.status.replace("_", " ")}</span>
+                      </div>
+                      {tp && (
+                        <div className="mt-2">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] text-[#555555]">{tp.estimatedRemaining} left</span>
+                            <span className="text-[10px]" style={{ color: tpColor }}>{tp.progressPercent}%</span>
+                          </div>
+                          <div className="h-1 bg-[#1a1a1a] rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all duration-1000 ease-linear"
+                              style={{ width: `${tp.progressPercent}%`, backgroundColor: tpColor }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#1a1a1a] text-[#888888]">{t.status.replace("_", " ")}</span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -808,6 +889,8 @@ export default function AgentsPage() {
   const [tools, setTools] = useState<Tool[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [agentProgress, setAgentProgress] = useState<Record<string, TaskProgressItem>>({});
+  const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadData = useCallback(async () => {
     const [a, s, t, tk, act] = await Promise.all([
@@ -822,6 +905,49 @@ export default function AgentsPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Poll /api/task-progress every 5s, only when there are in_progress tasks
+  useEffect(() => {
+    const hasInProgress = tasks.some((t) => t.status === "in_progress");
+
+    if (hasInProgress) {
+      const fetchProgress = async () => {
+        try {
+          const res = await fetch("/api/task-progress");
+          if (!res.ok) return;
+          const data = await res.json();
+          // Build a map keyed by assignee (agent_id) → primary task (first in array per agent)
+          const map: Record<string, TaskProgressItem> = {};
+          if (Array.isArray(data.agents)) {
+            for (const agentEntry of data.agents) {
+              if (Array.isArray(agentEntry.tasks) && agentEntry.tasks.length > 0) {
+                // Pick the primary task: prefer running/near_complete over overtime, then highest progress
+                const sorted = [...agentEntry.tasks].sort((a: TaskProgressItem, b: TaskProgressItem) => {
+                  const order = { near_complete: 0, running: 1, overtime: 2 };
+                  return (order[a.status] ?? 1) - (order[b.status] ?? 1);
+                });
+                map[agentEntry.agentId] = sorted[0];
+              }
+            }
+          }
+          setAgentProgress(map);
+        } catch {
+          // silently fail
+        }
+      };
+      fetchProgress();
+      progressIntervalRef.current = setInterval(fetchProgress, 5000);
+    } else {
+      setAgentProgress({});
+    }
+
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    };
+  }, [tasks]);
+
   const handleRetire = async () => {
     if (!selectedAgent) return;
     await fetch("/api/deploy-agent", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId: selectedAgent.agent_id }) });
@@ -833,9 +959,9 @@ export default function AgentsPage() {
   if (view === "edit" && selectedAgent) return <EditView agent={selectedAgent} agents={agents} skills={skills} tools={tools} onBack={() => setView("detail")}
     onSaved={() => { loadData(); fetch("/api/deploy-agent").then((r) => r.json()).then((all: Agent[]) => { const u = all.find((a) => a.agent_id === selectedAgent.agent_id); if (u) setSelectedAgent(u); setView("detail"); }); }} />;
 
-  if (view === "detail" && selectedAgent) return <AgentDetailView agent={selectedAgent} agents={agents} tasks={tasks} activities={activities}
+  if (view === "detail" && selectedAgent) return <AgentDetailView agent={selectedAgent} agents={agents} tasks={tasks} activities={activities} agentProgress={agentProgress}
     onBack={() => { setView("list"); setSelectedAgent(null); }} onEdit={() => setView("edit")} onRetire={handleRetire} />;
 
-  return <AgentListView agents={agents} tasks={tasks} activities={activities}
+  return <AgentListView agents={agents} tasks={tasks} activities={activities} agentProgress={agentProgress}
     onSelect={(a) => { setSelectedAgent(a); setView("detail"); }} onCreate={() => setView("create")} />;
 }
