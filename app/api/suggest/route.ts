@@ -1,352 +1,372 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, genId } from "@/lib/db";
-import { masterDb } from "@/lib/master-db";
+import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/suggest — Analyze user activity and recommend skills & tools
+ * GET /api/suggest — Agent-centric training recommendations
+ * 
+ * Analyzes each agent's actual work history (tasks, results, patterns)
+ * and suggests specific skills/tools they should learn.
+ * 
+ * Only suggests when there's a real, justified gap.
+ * Returns nothing for agents that are already well-equipped.
  * 
  * Query params:
- *   type: "skills" | "tools" | "all" (default: "all")
- *   limit: max recommendations (default: 10)
- * 
- * Returns personalized suggestions based on:
- *   - Task history (what they've been doing)
- *   - Current agent capabilities (what they already have)
- *   - Shared catalog (what's available to add)
- *   - Activity patterns (frequency/type of work)
+ *   agentId: optional — filter to one agent
  */
 
-interface Suggestion {
-  id: string;
-  name: string;
-  category: string;
-  description: string;
-  type: "skill" | "tool";
-  reason: string;
-  confidence: "high" | "medium" | "low";
-  basedOn: string[];
-  trainAgent?: string;      // agent_id best suited for this skill/tool
-  trainAgentName?: string;  // human-readable agent name
+interface TrainingSuggestion {
+  skill?: string;
+  tool?: string;
+  why: string;
+  evidence: string[];   // specific tasks/results that show the gap
+  priority: "high" | "medium";
 }
 
-// ── Keywords → skills/tools mapping ─────────────────────────────────────────
-
-const SKILL_SIGNALS: Record<string, { keywords: string[]; weight: number }> = {
-  // Security
-  "penetration-testing": { keywords: ["xss", "injection", "csrf", "vulnerability", "exploit", "owasp", "pentest", "security audit"], weight: 3 },
-  "api-security": { keywords: ["api security", "auth", "token", "jwt", "oauth", "cors", "rate limit"], weight: 2 },
-  "input-fuzzing": { keywords: ["fuzz", "input validation", "boundary", "edge case", "malformed"], weight: 2 },
-  // QA
-  "responsive-testing": { keywords: ["responsive", "mobile", "tablet", "viewport", "breakpoint", "media query"], weight: 3 },
-  "accessibility-testing": { keywords: ["a11y", "accessibility", "wcag", "aria", "screen reader", "contrast"], weight: 3 },
-  "performance-testing": { keywords: ["performance", "load test", "latency", "speed", "lighthouse", "core web vitals", "pagespeed"], weight: 3 },
-  "cross-browser-testing": { keywords: ["cross-browser", "safari", "firefox", "chrome", "browser compat"], weight: 2 },
-  "visual-regression": { keywords: ["visual regression", "screenshot", "pixel diff", "layout shift"], weight: 2 },
-  "e2e-testing": { keywords: ["e2e", "end to end", "playwright", "cypress", "selenium", "user flow"], weight: 2 },
-  "api-testing": { keywords: ["api test", "postman", "endpoint", "rest", "graphql", "status code"], weight: 2 },
-  "localization-testing": { keywords: ["localization", "i18n", "l10n", "translation", "language", "locale", "rtl"], weight: 3 },
-  // Product
-  "competitive-analysis": { keywords: ["competitor", "competitive", "benchmark", "market", "compare"], weight: 2 },
-  "user-journey-mapping": { keywords: ["user journey", "user flow", "funnel", "conversion", "onboarding"], weight: 2 },
-  "feature-prioritization": { keywords: ["prioritize", "roadmap", "backlog", "feature request", "mvp"], weight: 2 },
-  "ux-audit": { keywords: ["ux", "usability", "user experience", "heuristic", "ui review"], weight: 3 },
-  // SEO
-  "technical-seo": { keywords: ["seo", "meta tag", "sitemap", "robots", "structured data", "schema markup"], weight: 3 },
-  "keyword-research": { keywords: ["keyword", "search volume", "ranking", "serp"], weight: 2 },
-  "content-strategy": { keywords: ["content strategy", "blog", "copy", "content gap"], weight: 2 },
-  // Dev
-  "ci-cd": { keywords: ["ci/cd", "pipeline", "deploy", "github actions", "docker", "build"], weight: 2 },
-  "database-optimization": { keywords: ["database", "query optimization", "index", "slow query", "migration"], weight: 2 },
-  "error-monitoring": { keywords: ["error tracking", "sentry", "monitoring", "alerting", "logging", "crash"], weight: 2 },
-};
-
-const TOOL_SIGNALS: Record<string, { keywords: string[]; weight: number }> = {
-  "lighthouse": { keywords: ["performance", "lighthouse", "pagespeed", "core web vitals", "speed"], weight: 3 },
-  "axe-accessibility": { keywords: ["accessibility", "a11y", "wcag", "aria", "screen reader"], weight: 3 },
-  "browser-devtools": { keywords: ["devtools", "network tab", "console", "inspector", "debug"], weight: 2 },
-  "api-client": { keywords: ["api test", "postman", "curl", "endpoint", "rest client"], weight: 2 },
-  "screenshot-diff": { keywords: ["visual regression", "screenshot", "pixel", "diff"], weight: 2 },
-  "network-monitor": { keywords: ["network", "request", "response", "waterfall", "latency"], weight: 2 },
-  "seo-crawler": { keywords: ["seo", "crawl", "sitemap", "broken link", "meta tag"], weight: 2 },
-  "load-tester": { keywords: ["load test", "stress test", "concurrent", "throughput", "k6", "artillery"], weight: 2 },
-  "code-scanner": { keywords: ["code scan", "static analysis", "lint", "sonar", "code quality"], weight: 2 },
-  "dependency-checker": { keywords: ["dependency", "outdated", "vulnerability", "npm audit", "snyk"], weight: 2 },
-};
-
-function analyzeText(texts: string[]): Map<string, { score: number; matches: string[] }> {
-  const combined = texts.join(" ").toLowerCase();
-  const results = new Map<string, { score: number; matches: string[] }>();
-
-  // Analyze skill signals
-  for (const [skillId, signal] of Object.entries(SKILL_SIGNALS)) {
-    let score = 0;
-    const matches: string[] = [];
-    for (const kw of signal.keywords) {
-      const regex = new RegExp(kw, "gi");
-      const count = (combined.match(regex) || []).length;
-      if (count > 0) {
-        score += count * signal.weight;
-        matches.push(kw);
-      }
-    }
-    if (score > 0) {
-      results.set(`skill:${skillId}`, { score, matches });
-    }
-  }
-
-  // Analyze tool signals
-  for (const [toolId, signal] of Object.entries(TOOL_SIGNALS)) {
-    let score = 0;
-    const matches: string[] = [];
-    for (const kw of signal.keywords) {
-      const regex = new RegExp(kw, "gi");
-      const count = (combined.match(regex) || []).length;
-      if (count > 0) {
-        score += count * signal.weight;
-        matches.push(kw);
-      }
-    }
-    if (score > 0) {
-      results.set(`tool:${toolId}`, { score, matches });
-    }
-  }
-
-  return results;
+interface AgentTrainingPlan {
+  agentId: string;
+  agentName: string;
+  role: string;
+  currentSkillCount: number;
+  currentToolCount: number;
+  tasksAnalyzed: number;
+  suggestions: TrainingSuggestion[];
 }
 
-// ── Map skill/tool categories to best-fit agent ─────────────────────────────
+// ── Analysis rules per agent type ──────────────────────────────────────────
 
-const AGENT_SKILL_MAP: Record<string, string[]> = {
-  // Security skills → Sentinel
-  "penetration-testing": ["qa-security"],
-  "api-security": ["qa-security"],
-  "input-fuzzing": ["qa-security"],
-  // QA skills → Scout (functional) or Rover (general)
-  "responsive-testing": ["qa-functional"],
-  "accessibility-testing": ["qa-functional"],
-  "cross-browser-testing": ["qa-functional"],
-  "visual-regression": ["qa-functional"],
-  "e2e-testing": ["qa-functional"],
-  "localization-testing": ["qa-functional"],
-  "api-testing": ["qa-general"],
-  "performance-testing": ["qa-general"],
-  // Product skills → Prism
-  "competitive-analysis": ["product-manager"],
-  "user-journey-mapping": ["product-manager"],
-  "feature-prioritization": ["product-manager"],
-  "ux-audit": ["product-manager"],
-  "content-strategy": ["product-manager"],
-  // SEO skills → Beacon
-  "technical-seo": ["seo-analyst"],
-  "keyword-research": ["seo-analyst"],
-  // Dev skills → Forge/Pixel
-  "ci-cd": ["backend-dev"],
-  "database-optimization": ["backend-dev"],
-  "error-monitoring": ["backend-dev"],
-};
-
-const AGENT_TOOL_MAP: Record<string, string[]> = {
-  "lighthouse": ["qa-general", "qa-functional"],
-  "axe-accessibility": ["qa-functional"],
-  "browser-devtools": ["qa-functional", "qa-general"],
-  "api-client": ["qa-general", "qa-security"],
-  "screenshot-diff": ["qa-functional"],
-  "network-monitor": ["qa-general"],
-  "seo-crawler": ["seo-analyst"],
-  "load-tester": ["qa-general"],
-  "code-scanner": ["qa-security", "backend-dev"],
-  "dependency-checker": ["qa-security", "backend-dev"],
-};
-
-function findBestAgent(itemId: string, itemType: "skill" | "tool", agents: any[]): { agentId: string; agentName: string } | null {
-  const map = itemType === "skill" ? AGENT_SKILL_MAP : AGENT_TOOL_MAP;
-  const candidates = map[itemId];
-  if (!candidates) return null;
-
-  for (const candidateId of candidates) {
-    const agent = agents.find((a: any) => a.agent_id === candidateId);
-    if (agent) return { agentId: agent.agent_id, agentName: agent.name };
-  }
-  return null;
+interface AnalysisRule {
+  // If ANY of these patterns appear in task titles/descriptions/results
+  pattern: RegExp;
+  // And the agent is MISSING this skill
+  requiresSkill?: string;
+  requiresTool?: string;
+  // Explanation
+  why: string;
+  priority: "high" | "medium";
 }
 
-function getConfidence(score: number): "high" | "medium" | "low" {
-  if (score >= 10) return "high";
-  if (score >= 4) return "medium";
-  return "low";
+// Rules that apply to specific agent roles
+const QA_FUNCTIONAL_RULES: AnalysisRule[] = [
+  {
+    pattern: /responsiv|mobile|viewport|breakpoint|tablet|screen size/i,
+    requiresSkill: "responsive-testing",
+    why: "Agent tested responsive layouts — formalize this as a core skill with viewport-specific methodology",
+    priority: "high",
+  },
+  {
+    pattern: /locali[sz]|i18n|l10n|translat|language|locale|rtl/i,
+    requiresSkill: "localization-testing",
+    why: "Agent encountered localization work — needs structured approach for multi-language validation",
+    priority: "high",
+  },
+  {
+    pattern: /dark.?mode|light.?mode|theme|color.?scheme/i,
+    requiresSkill: "theme-testing",
+    why: "Agent tested themes/modes — should have systematic coverage for dark/light mode validation",
+    priority: "medium",
+  },
+  {
+    pattern: /a11y|accessib|wcag|aria|screen.?reader|contrast/i,
+    requiresSkill: "accessibility-testing",
+    why: "Accessibility patterns found in work — needs dedicated a11y testing methodology",
+    priority: "high",
+  },
+  {
+    pattern: /visual|screenshot|pixel|layout.?shift|css.?regression/i,
+    requiresSkill: "visual-regression-testing",
+    why: "Visual testing came up — add screenshot comparison and visual diff capabilities",
+    priority: "medium",
+  },
+  {
+    pattern: /form|input|validation|submit|field/i,
+    requiresSkill: "form-validation-testing",
+    why: "Lots of form/input testing — formalize edge case and validation testing patterns",
+    priority: "medium",
+  },
+  {
+    pattern: /performance|slow|load.?time|lighthouse|speed/i,
+    requiresTool: "lighthouse",
+    why: "Performance concerns found in testing — Lighthouse would give structured performance metrics",
+    priority: "medium",
+  },
+];
+
+const QA_SECURITY_RULES: AnalysisRule[] = [
+  {
+    pattern: /api|endpoint|route|request|response/i,
+    requiresSkill: "api-security-testing",
+    why: "Agent tests API routes — needs structured API security methodology (auth bypass, rate limiting, input validation)",
+    priority: "high",
+  },
+  {
+    pattern: /header|cors|csp|content.?security|x-frame/i,
+    requiresSkill: "security-headers-audit",
+    why: "Security header issues found — add systematic header validation checklist",
+    priority: "high",
+  },
+  {
+    pattern: /auth|session|token|jwt|cookie|login/i,
+    requiresSkill: "authentication-testing",
+    why: "Auth-related testing detected — formalize session management and auth bypass testing",
+    priority: "high",
+  },
+  {
+    pattern: /dependency|npm.?audit|outdated|cve|supply.?chain/i,
+    requiresTool: "dependency-scanner",
+    why: "Dependency risks mentioned — add automated dependency vulnerability scanning",
+    priority: "medium",
+  },
+  {
+    pattern: /rate.?limit|brute.?force|dos|throttl/i,
+    requiresSkill: "rate-limit-testing",
+    why: "Rate limiting issues found — needs methodology for testing abuse prevention",
+    priority: "medium",
+  },
+];
+
+const QA_GENERAL_RULES: AnalysisRule[] = [
+  {
+    pattern: /api|endpoint|status.?code|json|payload/i,
+    requiresSkill: "api-contract-testing",
+    why: "API testing is frequent — add contract testing to verify response schemas and edge cases",
+    priority: "high",
+  },
+  {
+    pattern: /cross.?page|navigation|sidebar|route|link/i,
+    requiresSkill: "navigation-testing",
+    why: "Cross-page testing is a pattern — formalize navigation and routing test coverage",
+    priority: "medium",
+  },
+  {
+    pattern: /data|database|state|persist|storage/i,
+    requiresSkill: "data-integrity-testing",
+    why: "Data-related testing detected — add data persistence and state management validation",
+    priority: "medium",
+  },
+  {
+    pattern: /performance|slow|load|speed|metric/i,
+    requiresTool: "lighthouse",
+    why: "Performance came up in general QA — Lighthouse would provide objective metrics",
+    priority: "medium",
+  },
+];
+
+const QA_LEAD_RULES: AnalysisRule[] = [
+  {
+    pattern: /product|ux|user.?experience|usability|competitor/i,
+    requiresSkill: "product-qa-strategy",
+    why: "Atlas handles product-level analysis — needs product QA strategy skills to bridge QA and product thinking",
+    priority: "medium",
+  },
+  {
+    pattern: /priorit|risk|critical|blocker|severity/i,
+    requiresSkill: "risk-based-test-prioritization",
+    why: "Test prioritization patterns detected — formalize risk-based testing methodology",
+    priority: "medium",
+  },
+];
+
+const SEO_RULES: AnalysisRule[] = [
+  {
+    pattern: /core.?web.?vital|cls|lcp|fid|inp|performance/i,
+    requiresSkill: "core-web-vitals-optimization",
+    why: "CWV analysis is part of audits — add dedicated optimization recommendations skill",
+    priority: "high",
+  },
+  {
+    pattern: /local|google.?business|map|location|nap/i,
+    requiresSkill: "local-seo",
+    why: "Local SEO elements detected — add local search optimization capabilities",
+    priority: "medium",
+  },
+  {
+    pattern: /content|blog|copy|article|keyword/i,
+    requiresSkill: "content-strategy",
+    why: "Content analysis is part of SEO work — formalize content gap and strategy recommendations",
+    priority: "medium",
+  },
+];
+
+const PRODUCT_RULES: AnalysisRule[] = [
+  {
+    pattern: /onboard|signup|first.?time|activation|funnel/i,
+    requiresSkill: "onboarding-optimization",
+    why: "Onboarding/activation analysis detected — add dedicated onboarding funnel expertise",
+    priority: "high",
+  },
+  {
+    pattern: /monetiz|pricing|revenue|conversion|paid/i,
+    requiresSkill: "pricing-strategy",
+    why: "Monetization analysis present — strengthen pricing and conversion optimization skills",
+    priority: "medium",
+  },
+  {
+    pattern: /a\/b|experiment|test.*variant|hypothesis/i,
+    requiresSkill: "experimentation-design",
+    why: "A/B testing or experimentation mentioned — add structured experiment design methodology",
+    priority: "medium",
+  },
+];
+
+const FRONTEND_RULES: AnalysisRule[] = [
+  {
+    pattern: /animation|transition|motion|framer/i,
+    requiresSkill: "animation-design",
+    why: "UI animations in scope — add motion design and transition best practices",
+    priority: "medium",
+  },
+  {
+    pattern: /a11y|accessib|aria|screen.?reader/i,
+    requiresSkill: "accessible-frontend",
+    why: "Accessibility requirements in UI work — formalize accessible component patterns",
+    priority: "high",
+  },
+  {
+    pattern: /test|jest|vitest|playwright|cypress/i,
+    requiresSkill: "frontend-testing",
+    why: "Frontend code should have tests — add unit/component testing skills",
+    priority: "high",
+  },
+];
+
+const BACKEND_RULES: AnalysisRule[] = [
+  {
+    pattern: /websocket|real.?time|sse|stream|push/i,
+    requiresSkill: "realtime-systems",
+    why: "Real-time features in task history — add WebSocket/SSE architecture skills",
+    priority: "high",
+  },
+  {
+    pattern: /auth|session|token|jwt|permission/i,
+    requiresSkill: "authentication-architecture",
+    why: "Auth work detected — formalize authentication and authorization patterns",
+    priority: "high",
+  },
+  {
+    pattern: /test|jest|vitest|integration.?test|unit.?test/i,
+    requiresSkill: "backend-testing",
+    why: "Backend code should have tests — add unit/integration testing methodology",
+    priority: "high",
+  },
+  {
+    pattern: /cache|redis|performance|optimi[sz]/i,
+    requiresSkill: "caching-strategy",
+    why: "Performance optimization detected — add caching and query optimization skills",
+    priority: "medium",
+  },
+];
+
+const AGENT_RULES: Record<string, AnalysisRule[]> = {
+  "qa-functional": QA_FUNCTIONAL_RULES,
+  "qa-security": QA_SECURITY_RULES,
+  "qa-general": QA_GENERAL_RULES,
+  "qa-lead": QA_LEAD_RULES,
+  "seo-analyst": SEO_RULES,
+  "product-manager": PRODUCT_RULES,
+  "frontend-dev": FRONTEND_RULES,
+  "backend-dev": BACKEND_RULES,
+};
+
+function analyzeAgent(agent: any, tasks: any[]): AgentTrainingPlan {
+  const skills = new Set<string>(JSON.parse(agent.skills || "[]") as string[]);
+  const tools = new Set<string>(JSON.parse(agent.tools || "[]") as string[]);
+  const rules = AGENT_RULES[agent.agent_id] || [];
+
+  const agentTasks = tasks.filter(t => t.assignee === agent.agent_id);
+  
+  // Build text corpus from this agent's actual work
+  const corpus = agentTasks.map(t => 
+    `${t.title} ${t.description || ""} ${t.result || ""}`
+  ).join(" ");
+
+  const suggestions: TrainingSuggestion[] = [];
+
+  for (const rule of rules) {
+    // Check if rule pattern matches this agent's work
+    const matches = corpus.match(rule.pattern);
+    if (!matches) continue;
+
+    // Check if they already have the skill/tool
+    if (rule.requiresSkill && skills.has(rule.requiresSkill)) continue;
+    if (rule.requiresTool && tools.has(rule.requiresTool)) continue;
+
+    // Find specific tasks that triggered this rule
+    const evidence = agentTasks
+      .filter(t => rule.pattern.test(`${t.title} ${t.description || ""} ${t.result || ""}`))
+      .map(t => t.title)
+      .slice(0, 3);
+
+    if (evidence.length === 0) continue;
+
+    // Avoid duplicate suggestions
+    const key = rule.requiresSkill || rule.requiresTool;
+    if (suggestions.some(s => (s.skill || s.tool) === key)) continue;
+
+    suggestions.push({
+      ...(rule.requiresSkill ? { skill: rule.requiresSkill } : {}),
+      ...(rule.requiresTool ? { tool: rule.requiresTool } : {}),
+      why: rule.why,
+      evidence,
+      priority: rule.priority,
+    });
+  }
+
+  // Sort: high priority first, then by evidence count
+  suggestions.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority === "high" ? -1 : 1;
+    return b.evidence.length - a.evidence.length;
+  });
+
+  return {
+    agentId: agent.agent_id,
+    agentName: agent.name,
+    role: agent.role,
+    currentSkillCount: skills.size,
+    currentToolCount: tools.size,
+    tasksAnalyzed: agentTasks.length,
+    suggestions: suggestions.slice(0, 5), // max 5 per agent — quality over quantity
+  };
 }
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const type = searchParams.get("type") || "all";
-  const limit = parseInt(searchParams.get("limit") || "10");
+  const filterAgent = searchParams.get("agentId");
 
   try {
-    // 1. Gather user activity data
-    const tasks = db.prepare("SELECT title, description, status, assignee FROM tasks ORDER BY created_at DESC LIMIT 100").all() as any[];
-    const activities = db.prepare("SELECT action, detail FROM activities ORDER BY created_at DESC LIMIT 200").all() as any[];
-    const agents = db.prepare("SELECT agent_id, name, role, skills, tools FROM agents").all() as any[];
+    const agents = db.prepare("SELECT * FROM agents WHERE status = 'active'").all() as any[];
+    const tasks = db.prepare("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 200").all() as any[];
 
-    // Build text corpus from user activity
-    const activityTexts: string[] = [];
-    for (const t of tasks) {
-      activityTexts.push(`${t.title} ${t.description}`);
-    }
-    for (const a of activities) {
-      activityTexts.push(`${a.action} ${a.detail}`);
-    }
+    const plans: AgentTrainingPlan[] = [];
 
-    // 2. Get what user already has
-    const existingSkills = new Set<string>();
-    const existingTools = new Set<string>();
-
-    const userSkills = db.prepare("SELECT id FROM skills").all() as any[];
-    const userTools = db.prepare("SELECT id FROM tools").all() as any[];
-    userSkills.forEach((s: any) => existingSkills.add(s.id));
-    userTools.forEach((t: any) => existingTools.add(t.id));
-
-    // Also count agent skills/tools
     for (const agent of agents) {
-      try {
-        const sk = JSON.parse(agent.skills || "[]");
-        const tl = JSON.parse(agent.tools || "[]");
-        sk.forEach((s: string) => existingSkills.add(s));
-        tl.forEach((t: string) => existingTools.add(t));
-      } catch { /* skip */ }
-    }
+      // Skip orchestrator and test agents
+      if (agent.agent_id === "main" || agent.agent_id === "test-verify") continue;
+      if (filterAgent && agent.agent_id !== filterAgent) continue;
 
-    // 3. Get shared catalog (available to suggest)
-    const sharedSkills = masterDb.prepare("SELECT * FROM shared_skills").all() as any[];
-    const sharedTools = masterDb.prepare("SELECT * FROM shared_tools").all() as any[];
-
-    // 4. Analyze activity for signals
-    const signals = analyzeText(activityTexts);
-
-    // 5. Build suggestions
-    const suggestions: Suggestion[] = [];
-
-    // Skill suggestions
-    if (type === "all" || type === "skills") {
-      for (const [key, { score, matches }] of signals) {
-        if (!key.startsWith("skill:")) continue;
-        const skillId = key.replace("skill:", "");
-
-        // Check if already in shared catalog for richer info
-        const shared = sharedSkills.find((s: any) => s.id === skillId);
-        const alreadyHas = existingSkills.has(skillId);
-
-        const bestAgent = findBestAgent(skillId, "skill", agents);
-        suggestions.push({
-          id: skillId,
-          name: shared?.name || skillId.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
-          category: shared?.category || "Suggested",
-          description: shared?.description || `Recommended based on your activity patterns`,
-          type: "skill",
-          reason: alreadyHas
-            ? `Already trained — your activity confirms it's relevant (matched: ${matches.join(", ")})`
-            : bestAgent
-              ? `Train ${bestAgent.agentName} — your tasks involve ${matches.join(", ")} but this skill is missing`
-              : `Your tasks frequently involve ${matches.join(", ")} — add this to strengthen your team`,
-          confidence: getConfidence(score),
-          basedOn: matches,
-          trainAgent: bestAgent?.agentId,
-          trainAgentName: bestAgent?.agentName,
-        });
-      }
-
-      // Also suggest from shared catalog based on category gaps
-      const userCategories = new Set(userSkills.map((s: any) => {
-        const full = db.prepare("SELECT category FROM skills WHERE id = ?").get(s.id) as any;
-        return full?.category;
-      }).filter(Boolean));
-
-      for (const shared of sharedSkills) {
-        const skillId = (shared as any).id;
-        if (existingSkills.has(skillId)) continue;
-        if (signals.has(`skill:${skillId}`)) continue; // already suggested
-
-        // If we don't have any skills in this category, suggest top ones
-        if (!userCategories.has((shared as any).category)) {
-          suggestions.push({
-            id: skillId,
-            name: (shared as any).name,
-            category: (shared as any).category,
-            description: (shared as any).description,
-            type: "skill",
-            reason: `Expand your capabilities — you don't have any ${(shared as any).category} skills yet`,
-            confidence: "low",
-            basedOn: ["category gap"],
-          });
-        }
+      const plan = analyzeAgent(agent, tasks);
+      
+      // Only include agents that have suggestions
+      if (plan.suggestions.length > 0) {
+        plans.push(plan);
       }
     }
 
-    // Tool suggestions
-    if (type === "all" || type === "tools") {
-      for (const [key, { score, matches }] of signals) {
-        if (!key.startsWith("tool:")) continue;
-        const toolId = key.replace("tool:", "");
-        const shared = sharedTools.find((t: any) => t.id === toolId);
-        const alreadyHas = existingTools.has(toolId);
-
-        const bestToolAgent = findBestAgent(toolId, "tool", agents);
-        suggestions.push({
-          id: toolId,
-          name: shared?.name || toolId.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
-          category: shared?.category || "Suggested",
-          description: shared?.description || `Recommended based on your activity patterns`,
-          type: "tool",
-          reason: alreadyHas
-            ? `Already available — confirmed relevant (matched: ${matches.join(", ")})`
-            : bestToolAgent
-              ? `Add to ${bestToolAgent.agentName}'s toolkit — your work involves ${matches.join(", ")}`
-              : `Your work involves ${matches.join(", ")} — this tool would help`,
-          confidence: getConfidence(score),
-          basedOn: matches,
-          trainAgent: bestToolAgent?.agentId,
-          trainAgentName: bestToolAgent?.agentName,
-        });
-      }
-    }
-
-    // 6. Sort by confidence + score, deduplicate, limit
-    const order = { high: 0, medium: 1, low: 2 };
-    suggestions.sort((a, b) => {
-      const diff = order[a.confidence] - order[b.confidence];
-      if (diff !== 0) return diff;
-      // Within same confidence, prefer items they DON'T have yet
-      const aHas = (a.type === "skill" ? existingSkills : existingTools).has(a.id);
-      const bHas = (b.type === "skill" ? existingSkills : existingTools).has(b.id);
-      if (aHas !== bHas) return aHas ? 1 : -1;
-      return 0;
-    });
-
-    // Separate into new suggestions vs confirmations
-    const newSuggestions = suggestions.filter(s => {
-      const set = s.type === "skill" ? existingSkills : existingTools;
-      return !set.has(s.id);
-    });
-    const confirmations = suggestions.filter(s => {
-      const set = s.type === "skill" ? existingSkills : existingTools;
-      return set.has(s.id);
+    // Sort by total high-priority suggestions
+    plans.sort((a, b) => {
+      const aHigh = a.suggestions.filter(s => s.priority === "high").length;
+      const bHigh = b.suggestions.filter(s => s.priority === "high").length;
+      return bHigh - aHigh;
     });
 
     return NextResponse.json({
-      suggestions: newSuggestions.slice(0, limit),
-      alreadyRelevant: confirmations.slice(0, 5),
-      analysis: {
-        totalTasks: tasks.length,
-        totalActivities: activities.length,
-        existingSkillCount: existingSkills.size,
-        existingToolCount: existingTools.size,
-        sharedCatalogSkills: sharedSkills.length,
-        sharedCatalogTools: sharedTools.length,
-        topSignals: [...signals.entries()]
-          .sort((a, b) => b[1].score - a[1].score)
-          .slice(0, 10)
-          .map(([key, val]) => ({ id: key, score: val.score, keywords: val.matches })),
+      agents: plans,
+      summary: {
+        agentsAnalyzed: agents.length - 2, // minus main + test
+        agentsWithSuggestions: plans.length,
+        totalSuggestions: plans.reduce((sum, p) => sum + p.suggestions.length, 0),
+        tasksAnalyzed: tasks.length,
       },
     });
   } catch (err: any) {
@@ -355,55 +375,37 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * POST /api/suggest — Accept a suggestion (add skill or tool to user's instance)
- * 
- * Body: { id: string, type: "skill" | "tool" }
+ * POST /api/suggest — Accept a training suggestion (add skill/tool to agent)
+ * Body: { agentId: string, skill?: string, tool?: string }
  */
 export async function POST(req: NextRequest) {
   try {
-    const { id, type } = await req.json();
-    if (!id || !type) {
-      return NextResponse.json({ error: "id and type required" }, { status: 400 });
-    }
+    const { agentId, skill, tool } = await req.json();
+    if (!agentId) return NextResponse.json({ error: "agentId required" }, { status: 400 });
+    if (!skill && !tool) return NextResponse.json({ error: "skill or tool required" }, { status: 400 });
 
-    if (type === "skill") {
-      // Copy from shared catalog or create placeholder
-      const shared = masterDb.prepare("SELECT * FROM shared_skills WHERE id = ?").get(id) as any;
-      if (shared) {
-        db.prepare(`
-          INSERT INTO skills (id, name, category, description, required_tools, prompt_additions)
-          VALUES (?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET updated_at=datetime('now')
-        `).run(shared.id, shared.name, shared.category, shared.description, shared.required_tools, shared.prompt_additions);
-      } else {
-        db.prepare(`
-          INSERT INTO skills (id, name, category, description)
-          VALUES (?, ?, 'Custom', 'User-accepted suggestion')
-          ON CONFLICT(id) DO UPDATE SET updated_at=datetime('now')
-        `).run(id, id.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()));
+    const agent = db.prepare("SELECT * FROM agents WHERE agent_id = ?").get(agentId) as any;
+    if (!agent) return NextResponse.json({ error: `Agent "${agentId}" not found` }, { status: 404 });
+
+    if (skill) {
+      const skills = JSON.parse(agent.skills || "[]");
+      if (!skills.includes(skill)) {
+        skills.push(skill);
+        db.prepare("UPDATE agents SET skills = ?, updated_at = datetime('now') WHERE agent_id = ?")
+          .run(JSON.stringify(skills), agentId);
       }
-      return NextResponse.json({ success: true, message: `Skill "${id}" added` });
+      return NextResponse.json({ success: true, message: `Skill "${skill}" added to ${agent.name}` });
     }
 
-    if (type === "tool") {
-      const shared = masterDb.prepare("SELECT * FROM shared_tools WHERE id = ?").get(id) as any;
-      if (shared) {
-        db.prepare(`
-          INSERT INTO tools (id, name, category, description)
-          VALUES (?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET updated_at=datetime('now')
-        `).run(shared.id, shared.name, shared.category, shared.description);
-      } else {
-        db.prepare(`
-          INSERT INTO tools (id, name, category, description)
-          VALUES (?, ?, 'Custom', 'User-accepted suggestion')
-          ON CONFLICT(id) DO UPDATE SET updated_at=datetime('now')
-        `).run(id, id.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()));
+    if (tool) {
+      const tools = JSON.parse(agent.tools || "[]");
+      if (!tools.includes(tool)) {
+        tools.push(tool);
+        db.prepare("UPDATE agents SET tools = ?, updated_at = datetime('now') WHERE agent_id = ?")
+          .run(JSON.stringify(tools), agentId);
       }
-      return NextResponse.json({ success: true, message: `Tool "${id}" added` });
+      return NextResponse.json({ success: true, message: `Tool "${tool}" added to ${agent.name}` });
     }
-
-    return NextResponse.json({ error: "type must be 'skill' or 'tool'" }, { status: 400 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
