@@ -1,9 +1,25 @@
 import Database from "better-sqlite3";
 import { join, dirname } from "path";
-import { mkdirSync } from "fs";
+import { mkdirSync, existsSync } from "fs";
 
-// DATABASE_PATH env var allows per-instance databases from the same codebase
-const DB_PATH = process.env.DATABASE_PATH || join(process.cwd(), "data", "mission-control.db");
+// DATABASE_PATH env var is REQUIRED at runtime to prevent accidental empty-DB starts.
+// Falls back to cwd/data/ only during build or development.
+const FALLBACK_PATH = join(process.cwd(), "data", "mission-control.db");
+const IS_BUILD = process.env.NEXT_PHASE === "phase-production-build" || process.argv.some(a => a.includes("next-build") || a.includes("next build"));
+
+if (!process.env.DATABASE_PATH && !IS_BUILD) {
+  console.warn(
+    "⚠️  DATABASE_PATH env var is not set. Using fallback: " + FALLBACK_PATH + "\n" +
+    "   Set DATABASE_PATH explicitly in instances.json to prevent empty-DB issues."
+  );
+}
+
+const DB_PATH = process.env.DATABASE_PATH || FALLBACK_PATH;
+
+// Log which DB is being used at runtime (not during build)
+if (!IS_BUILD) {
+  console.log(`📦 DB: ${DB_PATH}${process.env.DATABASE_PATH ? "" : " (fallback)"}`);
+}
 
 // Ensure DB directory exists
 mkdirSync(dirname(DB_PATH), { recursive: true });
