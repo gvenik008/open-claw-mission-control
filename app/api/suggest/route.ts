@@ -27,6 +27,8 @@ interface Suggestion {
   reason: string;
   confidence: "high" | "medium" | "low";
   basedOn: string[];
+  trainAgent?: string;      // agent_id best suited for this skill/tool
+  trainAgentName?: string;  // human-readable agent name
 }
 
 // ── Keywords → skills/tools mapping ─────────────────────────────────────────
@@ -114,6 +116,62 @@ function analyzeText(texts: string[]): Map<string, { score: number; matches: str
   return results;
 }
 
+// ── Map skill/tool categories to best-fit agent ─────────────────────────────
+
+const AGENT_SKILL_MAP: Record<string, string[]> = {
+  // Security skills → Sentinel
+  "penetration-testing": ["qa-security"],
+  "api-security": ["qa-security"],
+  "input-fuzzing": ["qa-security"],
+  // QA skills → Scout (functional) or Rover (general)
+  "responsive-testing": ["qa-functional"],
+  "accessibility-testing": ["qa-functional"],
+  "cross-browser-testing": ["qa-functional"],
+  "visual-regression": ["qa-functional"],
+  "e2e-testing": ["qa-functional"],
+  "localization-testing": ["qa-functional"],
+  "api-testing": ["qa-general"],
+  "performance-testing": ["qa-general"],
+  // Product skills → Prism
+  "competitive-analysis": ["product-manager"],
+  "user-journey-mapping": ["product-manager"],
+  "feature-prioritization": ["product-manager"],
+  "ux-audit": ["product-manager"],
+  "content-strategy": ["product-manager"],
+  // SEO skills → Beacon
+  "technical-seo": ["seo-analyst"],
+  "keyword-research": ["seo-analyst"],
+  // Dev skills → Forge/Pixel
+  "ci-cd": ["backend-dev"],
+  "database-optimization": ["backend-dev"],
+  "error-monitoring": ["backend-dev"],
+};
+
+const AGENT_TOOL_MAP: Record<string, string[]> = {
+  "lighthouse": ["qa-general", "qa-functional"],
+  "axe-accessibility": ["qa-functional"],
+  "browser-devtools": ["qa-functional", "qa-general"],
+  "api-client": ["qa-general", "qa-security"],
+  "screenshot-diff": ["qa-functional"],
+  "network-monitor": ["qa-general"],
+  "seo-crawler": ["seo-analyst"],
+  "load-tester": ["qa-general"],
+  "code-scanner": ["qa-security", "backend-dev"],
+  "dependency-checker": ["qa-security", "backend-dev"],
+};
+
+function findBestAgent(itemId: string, itemType: "skill" | "tool", agents: any[]): { agentId: string; agentName: string } | null {
+  const map = itemType === "skill" ? AGENT_SKILL_MAP : AGENT_TOOL_MAP;
+  const candidates = map[itemId];
+  if (!candidates) return null;
+
+  for (const candidateId of candidates) {
+    const agent = agents.find((a: any) => a.agent_id === candidateId);
+    if (agent) return { agentId: agent.agent_id, agentName: agent.name };
+  }
+  return null;
+}
+
 function getConfidence(score: number): "high" | "medium" | "low" {
   if (score >= 10) return "high";
   if (score >= 4) return "medium";
@@ -179,6 +237,7 @@ export async function GET(req: NextRequest) {
         const shared = sharedSkills.find((s: any) => s.id === skillId);
         const alreadyHas = existingSkills.has(skillId);
 
+        const bestAgent = findBestAgent(skillId, "skill", agents);
         suggestions.push({
           id: skillId,
           name: shared?.name || skillId.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
@@ -186,10 +245,14 @@ export async function GET(req: NextRequest) {
           description: shared?.description || `Recommended based on your activity patterns`,
           type: "skill",
           reason: alreadyHas
-            ? `You already have this — your activity confirms it's relevant (matched: ${matches.join(", ")})`
-            : `Your tasks frequently involve ${matches.join(", ")} — this skill would strengthen your team`,
+            ? `Already trained — your activity confirms it's relevant (matched: ${matches.join(", ")})`
+            : bestAgent
+              ? `Train ${bestAgent.agentName} — your tasks involve ${matches.join(", ")} but this skill is missing`
+              : `Your tasks frequently involve ${matches.join(", ")} — add this to strengthen your team`,
           confidence: getConfidence(score),
           basedOn: matches,
+          trainAgent: bestAgent?.agentId,
+          trainAgentName: bestAgent?.agentName,
         });
       }
 
@@ -228,6 +291,7 @@ export async function GET(req: NextRequest) {
         const shared = sharedTools.find((t: any) => t.id === toolId);
         const alreadyHas = existingTools.has(toolId);
 
+        const bestToolAgent = findBestAgent(toolId, "tool", agents);
         suggestions.push({
           id: toolId,
           name: shared?.name || toolId.replace(/-/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
@@ -235,10 +299,14 @@ export async function GET(req: NextRequest) {
           description: shared?.description || `Recommended based on your activity patterns`,
           type: "tool",
           reason: alreadyHas
-            ? `Already in your toolkit — confirmed relevant (matched: ${matches.join(", ")})`
-            : `Your work involves ${matches.join(", ")} — this tool would help`,
+            ? `Already available — confirmed relevant (matched: ${matches.join(", ")})`
+            : bestToolAgent
+              ? `Add to ${bestToolAgent.agentName}'s toolkit — your work involves ${matches.join(", ")}`
+              : `Your work involves ${matches.join(", ")} — this tool would help`,
           confidence: getConfidence(score),
           basedOn: matches,
+          trainAgent: bestToolAgent?.agentId,
+          trainAgentName: bestToolAgent?.agentName,
         });
       }
     }
