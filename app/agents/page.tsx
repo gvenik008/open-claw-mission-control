@@ -200,7 +200,7 @@ function AgentListView({
 
           return (
             <button key={agent.agent_id} onClick={() => onSelect(agent)}
-              className="agent-card-animate bg-[#111111] border border-[#222222] rounded-2xl p-6 text-left hover:border-[#2a2a2a] hover:shadow-[0_0_30px_rgba(94,106,210,0.08)] transition-all group relative overflow-hidden"
+              className="agent-card-animate bg-[#161618] border border-[#2a2a2e] rounded-2xl p-6 text-left hover:border-[#3a3a40] hover:bg-[#1a1a1e] shadow-[0_2px_8px_rgba(0,0,0,0.3)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.4)] transition-all group relative overflow-hidden"
               style={{ animationDelay: `${idx * 50}ms` }}>
 
               {/* Left-side gradient accent bar */}
